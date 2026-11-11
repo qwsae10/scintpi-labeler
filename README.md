@@ -1,55 +1,75 @@
-# ScintPi disturbance labeler
+# scintpi-labeler
 
-Local review of continuous high-S4 periods in the Mother’s Day one-second
-dataset. Source Parquet files are read-only. Candidate events and manual
-decisions are stored separately under `state/`.
+A browser tool for labeling high-S4 events in ScintPi data, to build a
+verification dataset for scintillation classifiers.
 
-## Candidate definition
+Every satellite-minute with **S4 > 0.2 above 5° elevation** is a candidate.
+Consecutive candidate minutes of one receiver and satellite form an *event*.
+A labeler marks each event as **Scintillation**, **Multipath**, **RFI** or
+**Unsure/Artifact**, with **High** or **Low** confidence, and can save hard
+cases for a reviewer. Part of an event can carry its own label.
 
-- Raw `s4_1 > 0.2`.
-- Elevation strictly above 30° and no higher than 90°.
-- `svid = 255` is excluded.
-- The confirmed May 5 timestamp errors inside the MOS/UTD May 11 files are
-  excluded.
-- Consecutive one-minute bins for the same station and PRN form one event.
-- No below-threshold or missing minute is bridged.
-- Events are joined across daily-file boundaries.
+The data come from about a week of days per receiver from 43 ScintPi 2, 3 and
+4 receivers, low and mid latitude. The days include the 2024-05-10/11 and
+2024-10-10/11 storms. They are processed from the raw 20–50 Hz files on
+ganymede2.
 
-Quality flags are displayed but do not remove candidates. Each plot includes
-20 minutes before and after the event. The ten comparison satellites are those
-with the most SNR1 samples in that full window. S4 remains visible even when a
-quality flag is raised so the trigger can be reviewed; sigma-phi is shown only
-for quality value 0 to prevent failed phase estimates from dominating its axis.
-Carrier-phase STEC is plotted relative to its minimum in the displayed window.
+| Tab | Shows |
+|---|---|
+| Overview | 1 s C/N₀ on every frequency; elevation and azimuth; 1-min S4, σφ (receiver clock removed) and τ (1/e decorrelation time) per frequency; relative slant TEC |
+| 20 Hz | full-rate C/N₀ and clock-removed detrended carrier phase per frequency, with cycle slips |
+| Other satellites | C/N₀ of the best-covered other satellites; S4 of every satellite as a heat map; how many satellites exceed S4 0.2 each minute |
+| Sidereal repeat | the same satellite on the day before and after, at the same azimuth and elevation (multipath repeats, scintillation does not) |
+| Sky maps | polar maps of S4, σφ, τ and C/N₀ for every satellite-minute of the day, with the event track |
+| Network *(off by default)* | highest S4 at the nearest other receivers |
+| Kp / F10.7 *(off by default)* | geomagnetic and solar activity around the event |
 
-## Start
+Each user picks tabs, window length, elevation mask and other options on the
+Settings page.
 
-Double-click `run_labeler.command`, or run:
+## For labelers
 
-```bash
-/Users/isaac/opt/miniconda3/envs/default_env/bin/python \
-  /Users/isaac/Documents/ML_Analysis_2026/manual_labeler/app.py serve
+1. [docs/connecting.md](docs/connecting.md): get access and open the app (one
+   command).
+2. [docs/labeling_guide.md](docs/labeling_guide.md): how to decide, with
+   examples of each class and of messy data.
+
+You can stop at any time. Every key press is saved on ganymede immediately,
+and the queue resumes where you left off.
+
+## For maintainers
+
+- [docs/pipeline.md](docs/pipeline.md): raw archive → chosen days →
+  processed products → events → labels → export.
+- [docs/data_products.md](docs/data_products.md): file and column reference.
+
+```
+scintlab/             Python package
+  inventory.py        scan the raw archive, assign receivers
+  select_days.py      choose receiver-days (forced storms, Kp storms, bubble season, random)
+  sc2.py              ScintPi 2 raw reader (scintkit has none)
+  orbits.py           SP3 elevation/azimuth for ScintPi 4 files without it
+  process.py          raw -> minute / second / 20 Hz products per receiver-day
+  events.py           candidate events
+  labels.py           append-only per-user label logs, settings, export
+  figures.py          one Plotly figure per tab
+  app.py, templates/, static/   Flask app
+  default_config.yaml every threshold and default
+cluster/              SLURM scripts and serve.sh
+docs/
+tests/
+legacy_mothersday/    the earlier single-dataset labeler (Mother's Day 2024, 1 s files)
 ```
 
-Open `http://127.0.0.1:8765`. The first start scans the 24 source files and
-creates the event index; later starts reuse it unless the source files or index
-rules change.
-
-Keyboard controls: `1` Scintillation, `2` Multipath, `3` RFI, `4` Other,
-`S` skip, left/right arrows navigate. Decisions are committed to SQLite after
-every action.
-
-## Maintenance commands
+Development install (laptop):
 
 ```bash
-# Force a fresh candidate scan
-/Users/isaac/opt/miniconda3/envs/default_env/bin/python app.py build-index --force
-
-# Print progress
-/Users/isaac/opt/miniconda3/envs/default_env/bin/python app.py stats
-
-# Export without opening the browser
-/Users/isaac/opt/miniconda3/envs/default_env/bin/python app.py export
+git clone https://github.com/qwsae10/scintpi-labeler.git
+cd scintpi-labeler
+python -m pip install -e ".[dev]"
+pytest
 ```
 
-No classifier or saved model is imported or executed anywhere in this app.
+To run the app on a laptop against a copied subset, set
+`SCINTLAB_DATA_ROOT=/path/to/copy` (same layout as
+`/titan/frodrigues/scint_labeler`) and run `scintlab serve`.

@@ -33,6 +33,7 @@ def _clean(v):
 
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.json.sort_keys = False
     cfg = config.load()
     state = {"events": load_events(), "store": LabelStore()}
     state["by_id"] = state["events"].set_index("event_id", drop=False)
@@ -99,6 +100,7 @@ def create_app() -> Flask:
             "user": store().user, "is_reviewer": store().is_reviewer, "version": __version__,
             "classes": cfg["labels"]["classes"], "confidence": cfg["labels"]["confidence"],
             "settings": load_settings(store().user), "tab_titles": figures.TAB_TITLES,
+            "tab_order": list(figures.TAB_TITLES),
             "receivers": sorted(ev["receiver"].unique().tolist()) if len(ev) else [],
             "dates": sorted(ev["date"].unique().tolist()) if len(ev) else [],
             "constellations": sorted(ev["constellation"].unique().tolist()) if len(ev) else [],

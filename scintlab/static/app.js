@@ -61,7 +61,7 @@ function buildLabelButtons() {
 function buildTabs() {
   const nav = $("#tabs");
   nav.innerHTML = "";
-  const tabs = Object.keys(S.boot.tab_titles).filter((t) => S.settings.tabs[t]);
+  const tabs = S.boot.tab_order.filter((t) => S.settings.tabs[t]);
   tabs.forEach((t, i) => {
     const b = document.createElement("button");
     b.className = "tab";
@@ -307,10 +307,10 @@ function addSegment() {
 
 function openSettings() {
   const st = S.settings;
-  $("#set-tabs").innerHTML = Object.entries(S.boot.tab_titles).map(([t, n]) => `<label class="check"><input type="checkbox" data-tab="${t}" ${st.tabs[t] ? "checked" : ""}/> ${n}</label>`).join("");
+  $("#set-tabs").innerHTML = S.boot.tab_order.map((t) => [t, S.boot.tab_titles[t]]).map(([t, n]) => `<label class="check"><input type="checkbox" data-tab="${t}" ${st.tabs[t] ? "checked" : ""}/> ${n}</label>`).join("");
   const dt = $("#set-default_tab");
   dt.innerHTML = "";
-  Object.entries(S.boot.tab_titles).forEach(([t, n]) => dt.add(new Option(n, t)));
+  S.boot.tab_order.forEach((t) => dt.add(new Option(S.boot.tab_titles[t], t)));
   ["default_tab", "queue_order", "pad_minutes", "comparison_satellites", "elevation_mask_deg", "highrate_decimate_hz"]
     .forEach((k) => { $(`#set-${k}`).value = st[k]; });
   $("#settings").showModal();

@@ -70,6 +70,8 @@ def geometric_repeat(receiver: str, prn: str, t0: pd.Timestamp, t1: pd.Timestamp
     mismatch then stays large and the caller reports no repeat.
     """
     ref = window(receiver, "second", t0, t1, prn)
+    if "elev" not in ref:
+        return None
     ref = ref.dropna(subset=["elev", "azim"])
     if len(ref) < 60:
         return None
@@ -77,7 +79,10 @@ def geometric_repeat(receiver: str, prn: str, t0: pd.Timestamp, t1: pd.Timestamp
     guess = days * SIDEREAL_S
     lo = t0 + pd.Timedelta(seconds=guess - 900)
     hi = t1 + pd.Timedelta(seconds=guess + 900)
-    other = window(receiver, "second", lo, hi, prn).dropna(subset=["elev", "azim"])
+    other = window(receiver, "second", lo, hi, prn)
+    if "elev" not in other:
+        return None
+    other = other.dropna(subset=["elev", "azim"])
     if len(other) < 60:
         return None
     ot = (other["datetime"] - t0).dt.total_seconds().to_numpy()

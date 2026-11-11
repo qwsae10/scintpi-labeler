@@ -49,9 +49,9 @@ def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
     fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False)
     fig.update_xaxes(title_text="Time (UTC)", row=rows, col=1)
     fig.update_layout(
-        height=height, margin={"l": 70, "r": 60, "t": 40, "b": 45}, paper_bgcolor="white", plot_bgcolor="white",
+        height=height, margin={"l": 70, "r": 60, "t": 80, "b": 45}, paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Inter, system-ui, sans-serif", "size": 12}, hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "x": 0, "font": {"size": 11}},
+        legend={"orientation": "h", "yanchor": "top", "y": 0.995, "yref": "container", "x": 0, "font": {"size": 11}},
         uirevision="keep",
     )
     for a in fig.layout.annotations:
@@ -122,8 +122,9 @@ def overview(event: dict, settings: dict) -> dict:
     fig.update_yaxes(title_text="s", rangemode="tozero", row=5, col=1)
     fig.update_yaxes(title_text="TECU", row=6, col=1)
     if event.get("rx_type") == "sc2":
-        fig.add_annotation(text="ScintPi 2: L1 C/N₀ only (no phase, L2 or TEC)", xref="paper", yref="paper",
-                           x=1, y=1.04, xanchor="right", showarrow=False, font={"color": "#b54708"})
+        fig.add_annotation(text="ScintPi 2: integer L1 C/N₀ only (no phase, L2 or TEC)", xref="paper",
+                           yref="paper", x=1, y=1.0, yshift=22, xanchor="right", yanchor="bottom", showarrow=False,
+                           font={"color": "#b54708"})
     return _layout(fig, 1150, start, end, t0, t1, 6)
 
 
@@ -264,8 +265,10 @@ def skyplot(event: dict, settings: dict) -> dict:
     if hours:
         h = pd.Timedelta(hours=float(hours))
         day = day[(day["datetime"] >= start - h) & (day["datetime"] < end + h)]
-    fig = make_subplots(rows=2, cols=2, specs=[[{"type": "polar"}] * 2] * 2, horizontal_spacing=0.1,
-                        vertical_spacing=0.1, subplot_titles=[s[1] for s in SKY_INDICES])
+    fig = make_subplots(rows=2, cols=2, specs=[[{"type": "polar"}] * 2] * 2, horizontal_spacing=0.12,
+                        vertical_spacing=0.12, subplot_titles=[s[1] for s in SKY_INDICES])
+    for a in fig.layout.annotations:
+        a.yshift = 22
     trk = day[(day["prn"] == event["prn"]) & (day["datetime"] >= start) & (day["datetime"] < end)]
     for k, (col, title, lo, hi, cmap) in enumerate(SKY_INDICES):
         r, c = k // 2 + 1, k % 2 + 1
@@ -284,10 +287,11 @@ def skyplot(event: dict, settings: dict) -> dict:
                                  "y": 0.79 - 0.58 * (r - 1), "thickness": 10}},
             text=d["prn"] + " " + d["datetime"].dt.strftime("%H:%M"), showlegend=False,
             hovertemplate="%{text}<br>" + title + " %{marker.color:.2f}<extra></extra>"), row=r, col=c)
-        fig.add_trace(go.Scatterpolar(r=90 - trk["elev"], theta=trk["azim"], mode="lines+markers",
-                                      line={"color": "#d92d20", "width": 3}, marker={"size": 5},
-                                      name=f"{event['prn']} event", showlegend=k == 0,
-                                      hoverinfo="skip"), row=r, col=c)
+        fig.add_trace(go.Scatterpolargl(r=90 - trk["elev"], theta=trk["azim"], mode="lines+markers",
+                                        line={"color": "#d92d20", "width": 4},
+                                        marker={"size": 7, "color": "#d92d20", "line": {"color": "white", "width": 1}},
+                                        name=f"{event['prn']} event", showlegend=k == 0,
+                                        hoverinfo="skip"), row=r, col=c)
         fig.update_layout(**{polar: {"radialaxis": {"range": [0, 90 - min(mask, 0)], "tickvals": [0, 30, 60, 80],
                                                      "ticktext": ["90°", "60°", "30°", "10°"], "showline": False},
                                      "angularaxis": {"rotation": 90, "direction": "clockwise",

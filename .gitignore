@@ -10,3 +10,4 @@ exports/
 local_cache/
 .DS_Store
 config.local.yaml
+.claude/

@@ -104,10 +104,8 @@
         </div>
         <label class="check"><input type="checkbox" id="for-review" /> Save for reviewer <kbd>R</kbd></label>
         <button type="button" class="btn ghost" id="skip">Skip for now <kbd>S</kbd></button>
-        <button type="button" class="btn ghost" id="clear">Clear my label</button>
-      </div>
-      <div class="label-row options">
         <input id="notes" class="notes" placeholder="Notes (optional): what made you decide?" />
+        <button type="button" class="btn ghost" id="clear" title="Remove my decision for this event">Clear</button>
       </div>
       <details class="segments" id="segments-box">
         <summary>Part of the event looks different? Label a time range <span class="muted" id="seg-count"></span></summary>
@@ -166,8 +164,8 @@
     </ul>
     <h3>Keys</h3>
     <p><kbd>1</kbd>–<kbd>4</kbd> label and go to next · <kbd>H</kbd>/<kbd>L</kbd> confidence · <kbd>R</kbd> save for
-      reviewer · <kbd>S</kbd> skip · <kbd>←</kbd>/<kbd>→</kbd> previous/next · <kbd>Tab</kbd> number keys
-      <kbd>Shift</kbd>+<kbd>1</kbd>… switch tabs · <kbd>Q</kbd> queue</p>
+      reviewer · <kbd>S</kbd> skip · <kbd>←</kbd>/<kbd>→</kbd> previous/next ·
+      <kbd>Shift</kbd>+<kbd>1</kbd>… switch tabs · <kbd>Q</kbd> show/hide queue · <kbd>?</kbd> this help</p>
     <p class="muted small">Every label is written to disk on ganymede the moment you press it. You can close the
       browser at any time and continue later.</p>
     <div class="dialog-buttons"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>
