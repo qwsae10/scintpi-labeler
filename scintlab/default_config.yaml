@@ -1,0 +1,73 @@
+# scintlab defaults. Override any key in a YAML file named by $SCINTLAB_CONFIG
+# or in <data_root>/config.yaml. Per-user display settings are saved from the
+# Settings page into <data_root>/labels/settings/<user>.json.
+
+paths:
+  # Shared project folder on ganymede2: products, events, labels.
+  data_root: /titan/frodrigues/scint_labeler
+  # Raw ScintPi archive (read only).
+  raw_root: /mfs/io/groups/uars/scintpi
+  # Temporary lvl0 files during processing. ${USER} is expanded.
+  work_dir: /scratch/ganymede2/${USER}/scint_labeler_work
+  # Septentrio RxTools converter for ScintPi 4 SBF files.
+  bin2asc: /mfs/io/groups/uars/UTD_septentrio/bin2asc
+
+candidates:
+  # A candidate minute has S4 on this channel above the threshold, elevation
+  # above the minimum, and enough samples for S4 (scintkit S4 quality flag 0).
+  s4_channel: 1
+  s4_threshold: 0.2
+  min_elevation_deg: 5.0
+  # Consecutive candidate minutes of one receiver and satellite form one event.
+  # Gaps of up to this many minutes are bridged (0 = no bridging).
+  bridge_gap_minutes: 0
+
+processing:
+  # 20 Hz samples are stored for every candidate satellite from this many
+  # minutes before its first to this many after its last candidate minute.
+  highrate_pad_minutes: 30
+  # Decorrelation time: first lag where the normalized autocorrelation of the
+  # linear intensity drops below this level (1/e).
+  tau_level: 0.36787944
+  tau_min_seconds: 50
+  # Raw files are joined into blocks of at most this many hours before the
+  # phase high-pass filter runs, so 15-min ScintPi 4 files do not get a filter
+  # edge every 15 minutes.
+  block_hours: {sc2: 6, sc3: 4, sc4: 2}
+
+sampling:
+  days_per_receiver: 8          # chosen as consecutive pairs (sidereal comparison)
+  seed: 20261111
+  forced_days: [2024-05-10, 2024-05-11, 2024-10-10, 2024-10-11]
+  storm_kp: 6.0                 # daily max Kp at or above this is a storm day
+  low_latitude_mlat_deg: 30.0   # |dipole magnetic latitude| below this is low latitude
+  min_day_coverage_hours: 20.0
+  first_date: 2021-01-01
+  exclude_folders: [sc004, solarScintPi]
+
+labels:
+  classes: [Scintillation, Multipath, RFI, Unsure/Artifact]
+  confidence: [High, Low]
+  # Users who see the Review queue and can set a final label.
+  reviewers: [igw180000]
+
+display:
+  # Tabs shown by default; each user can change these on the Settings page.
+  tabs:
+    overview: true
+    highrate: true
+    satellites: true
+    sidereal: true
+    skyplot: true
+    network: false
+    indices: false
+  default_tab: overview
+  pad_minutes: 20
+  comparison_satellites: 10
+  elevation_mask_deg: 10.0
+  queue_order: random           # random or chronological
+  highrate_decimate_hz: 20      # 20 = full rate; lower values plot faster
+
+server:
+  host: 127.0.0.1
+  port: 8765
