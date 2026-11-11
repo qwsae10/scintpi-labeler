@@ -85,6 +85,8 @@ def create_app() -> Flask:
             ev = ev.sort_values(["receiver", "start_utc", "prn"])
         elif order == "peak_s4":
             ev = ev.sort_values("peak_s4", ascending=False)
+        elif order == "stratified" and "strat_rank" in ev:
+            ev = ev.sort_values("strat_rank")
         else:
             ev = ev.sort_values("queue_rank")
         return ev

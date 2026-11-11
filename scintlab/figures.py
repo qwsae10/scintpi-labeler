@@ -105,7 +105,7 @@ def overview(event: dict, settings: dict) -> dict:
                         row_heights=[0.2, 0.13, 0.17, 0.17, 0.17, 0.16],
                         specs=[[{}], [{"secondary_y": True}], [{}], [{}], [{}], [{}]],
                         subplot_titles=(f"C/N₀ · {rx} {prn} (1 s)", "Elevation and azimuth",
-                                        "S4 (1 min)", "σφ, clock removed (1 min; grey = quality flag)",
+                                        "S4 (1 min; dotted = receiver noise removed)", "σφ, clock removed (1 min; grey = quality flag)",
                                         "τ, 1/e decorrelation time (1 min)", "Relative slant TEC (carrier phase)"))
     for i in _channels(sec, "snr"):
         _line(fig, sec["datetime"], sec[f"snr{i}"], f"C/N₀ {names[i]}", 1, CH_COLORS[i], unit=" dB-Hz")
@@ -115,6 +115,9 @@ def overview(event: dict, settings: dict) -> dict:
     for i in _channels(mins, "s4_"):
         _line(fig, mins["datetime"], mins[f"s4_{i}"], f"S4 {names[i]}", 3, CH_COLORS[i], mode="lines+markers",
               gl=False)
+        if f"s4_corrected_{i}" in mins and mins[f"s4_corrected_{i}"].notna().any():
+            _line(fig, mins["datetime"], mins[f"s4_corrected_{i}"], f"S4 noise-corrected {names[i]}", 3,
+                  CH_COLORS[i], dash="dot", width=1.1, gl=False)
     fig.add_hline(y=thr, line_dash="dash", line_color="#c23b4a", line_width=1.2, row=3, col=1)
     for i in _channels(mins, "sigma_phi_"):
         good = mins[f"sigma_phi_quality_flag_{i}"].eq(0) if f"sigma_phi_quality_flag_{i}" in mins else True

@@ -49,7 +49,7 @@
       <div class="two">
         <label>Elevation mask (°)<input id="f-elev_mask" type="number" step="1" min="0" max="80" /></label>
         <label>Order
-          <select id="f-order"><option value="">Settings default</option><option value="random">Random</option>
+          <select id="f-order"><option value="">Settings default</option><option value="stratified">Stratified random</option><option value="random">Random</option>
             <option value="chronological">By receiver and time</option><option value="peak_s4">Highest S4 first</option></select></label>
       </div>
       <button type="submit" class="btn wide">Apply</button>
@@ -129,7 +129,7 @@
     <fieldset><legend>Tabs to show</legend><div id="set-tabs" class="tab-checks"></div></fieldset>
     <div class="two">
       <label>Tab to open first<select id="set-default_tab"></select></label>
-      <label>Queue order<select id="set-queue_order"><option value="random">Random</option>
+      <label>Queue order<select id="set-queue_order"><option value="stratified">Stratified random</option><option value="random">Random</option>
         <option value="chronological">By receiver and time</option></select></label>
     </div>
     <div class="two">

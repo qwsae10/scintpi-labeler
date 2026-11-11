@@ -125,9 +125,10 @@ rules:
 
 ## Working habits
 
-- The queue is in a fixed random order. Label in that order so that the
-  labeled set stays a random sample. Use filters for practice, not for
-  cherry-picking.
+- The queue is in a fixed *stratified* random order: it cycles through groups
+  of events (receiver type × S4 level × elevation), so you see strong and weak,
+  high and low events in turn. Label in that order so the labeled set stays a
+  sample we can reweight. Use filters for practice, not for cherry-picking.
 - Take breaks. Speed matters less than consistency.
 - If something in the app is broken or confusing, write it in the notes and
   tick Save for reviewer, or tell Isaac.

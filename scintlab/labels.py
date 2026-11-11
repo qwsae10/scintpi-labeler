@@ -204,6 +204,11 @@ def export() -> dict:
         table["final_label"] = np.nan
         table["reviewer"] = np.nan
     table["final_label"] = table["final_label"].fillna(table["label"])
+    # Design weight per stratum: events in the stratum / events labeled in it (by this labeler).
+    if "stratum" in ev:
+        n_all = ev["stratum"].value_counts()
+        n_lab = table.groupby(["user", "stratum"])["event_id"].transform("count")
+        table["stratum_weight"] = table["stratum"].map(n_all) / n_lab
     table["segments"] = table["segments"].map(json.dumps)
     table.to_parquet(out_dir / f"labels_{stamp}.parquet", index=False)
     table.to_csv(out_dir / f"labels_{stamp}.csv", index=False)

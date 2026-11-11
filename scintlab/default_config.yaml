@@ -66,7 +66,9 @@ display:
   pad_minutes: 20
   comparison_satellites: 10
   elevation_mask_deg: 10.0
-  queue_order: random           # random or chronological
+  # stratified: one event from each (receiver type x S4 bin x elevation bin)
+  # stratum in turn; random: uniform; chronological: by receiver and time.
+  queue_order: stratified
   highrate_decimate_hz: 20      # 20 = full rate; lower values plot faster
 
 server:

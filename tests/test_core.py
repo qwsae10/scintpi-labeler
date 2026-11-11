@@ -120,3 +120,17 @@ def test_events_group_consecutive_minutes(root):
     ev = pd.DataFrame(events_for_day(day, cfg, rx, days))
     assert sorted(zip(ev["prn"], ev["n_minutes"])) == [("E11", 1), ("G01", 1), ("G01", 2)]
     assert (ev["day_reason"] == "forced").all()
+
+
+def test_stratified_order_cycles_strata():
+    from scintlab.events import add_queue_order
+
+    rng = np.random.default_rng(1)
+    n = 300
+    ev = pd.DataFrame({"event_id": [f"e{i}" for i in range(n)], "rx_type": "sc3",
+                       "peak_s4": np.r_[np.full(280, 0.22), np.full(20, 0.9)],
+                       "max_elev": np.r_[np.full(280, 8.0), rng.uniform(35, 80, 20)]})
+    add_queue_order(ev, seed=5)
+    first = ev.sort_values("strat_rank").head(2)
+    assert set(first["stratum"]) == {"sc3|s4_0.2-0.3|el_5-10", "sc3|s4_0.5+|el_30+"}
+    assert sorted(ev["queue_rank"]) == list(range(1, n + 1))

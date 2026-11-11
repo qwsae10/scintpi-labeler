@@ -69,6 +69,28 @@ def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.D
     return out
 
 
+S4_BINS = [0.2, 0.3, 0.5, np.inf]
+ELEV_BINS = [0, 10, 20, 30, 90.01]
+
+
+def add_queue_order(ev: pd.DataFrame, seed: int) -> None:
+    """Add ``queue_rank`` (uniform random order), ``stratum`` and ``strat_rank`` (stratified order).
+
+    Strata are receiver type x peak-S4 bin x max-elevation bin. The stratified
+    order takes one event from each stratum in turn (each stratum shuffled), so
+    rare strata (strong, high-elevation events) are reached early while every
+    stratum's labeled share stays known: weight = N_stratum / n_labeled_stratum.
+    """
+    key = ev["event_id"].map(lambda s: int(hashlib.sha1(f"{seed}|{s}".encode()).hexdigest()[:12], 16))
+    ev["queue_rank"] = key.rank(method="first").astype(int)
+    s4 = pd.cut(ev["peak_s4"], S4_BINS, right=False, labels=["s4_0.2-0.3", "s4_0.3-0.5", "s4_0.5+"])
+    el = pd.cut(ev["max_elev"], ELEV_BINS, right=False, labels=["el_5-10", "el_10-20", "el_20-30", "el_30+"])
+    ev["stratum"] = ev["rx_type"] + "|" + s4.astype(str) + "|" + el.astype(str)
+    within = ev.groupby("stratum")["queue_rank"].rank(method="first")
+    ev["strat_rank"] = (within * 1000 + ev["stratum"].map(
+        {k: i for i, k in enumerate(sorted(ev["stratum"].unique()))})).rank(method="first").astype(int)
+
+
 def build_events(cfg: dict | None = None) -> pd.DataFrame:
     cfg = cfg or config.load()
     root = config.products_dir()
@@ -82,11 +104,7 @@ def build_events(cfg: dict | None = None) -> pd.DataFrame:
             logger.exception("could not read %s", meta.parent)
     ev = pd.DataFrame(rows)
     if len(ev):
-        # Stable random order for the default queue: a labeled prefix of the
-        # queue is then a random sample of all events.
-        seed = int(cfg["sampling"]["seed"])
-        key = ev["event_id"].map(lambda s: int(hashlib.sha1(f"{seed}|{s}".encode()).hexdigest()[:12], 16))
-        ev["queue_rank"] = key.rank(method="first").astype(int)
+        add_queue_order(ev, int(cfg["sampling"]["seed"]))
     path = config.events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():

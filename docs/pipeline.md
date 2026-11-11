@@ -108,8 +108,12 @@ $S build-events
 ```
 
 Consecutive candidate minutes of one receiver and satellite form an event.
-Each event gets a stable random `queue_rank`, so a labeled prefix of the
-default queue is a random sample. Rebuilding keeps the old index as
+Each event gets a stable random `queue_rank` and a `stratum` (receiver type ×
+peak-S4 bin 0.2/0.3/0.5 × max-elevation bin 10/20/30°). The default queue
+order (`strat_rank`) takes one event from each stratum in turn. Weak,
+low-elevation events (about 70% of all events) therefore do not use up the
+labeling time, and the export carries `stratum_weight` = events in stratum /
+events labeled in stratum, for unbiased class fractions and scores. Rebuilding keeps the old index as
 `events_<time>.parquet`. Event ids depend only on receiver, satellite, start
 and end, so labels stay attached as long as the candidate rule is unchanged.
 After rebuilding, press nothing: running apps reload on restart (or POST
