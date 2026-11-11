@@ -63,6 +63,10 @@ def _day_list(args) -> pd.DataFrame:
         days = days[days["receiver"] == args.receiver]
     if args.date:
         days = days[days["date"] == args.date]
+    # Storm days first, so the most useful days are ready early in a long array run.
+    order = {"forced": 0, "storm": 1, "season": 2, "random": 3}
+    days = days.assign(_o=days["reason"].map(order).fillna(9)).sort_values(["_o", "receiver", "date"],
+                                                                           kind="stable").drop(columns="_o")
     if args.task_id is not None:
         days = days.iloc[args.task_id :: args.n_tasks]
     return days
