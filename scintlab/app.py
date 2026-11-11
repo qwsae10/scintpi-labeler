@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 def _clean(v):
+    if isinstance(v, np.ndarray):
+        return [_clean(x) for x in v.tolist()]
+    if isinstance(v, (list, tuple)):
+        return [_clean(x) for x in v]
     if isinstance(v, (pd.Timestamp,)):
         return v.isoformat()
     if isinstance(v, (np.floating,)):

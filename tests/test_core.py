@@ -140,3 +140,31 @@ def test_stratified_order_cycles_strata():
     first = ev.sort_values("strat_rank").head(2)
     assert set(first["stratum"]) == {"sc3|s4_0.2-0.3|el_5-10", "sc3|s4_0.5+|el_30+"}
     assert sorted(ev["queue_rank"]) == list(range(1, n + 1))
+
+
+def test_app_endpoints_on_built_events(root):
+    """Every JSON endpoint the page calls at start-up must serialize (list columns included)."""
+    from scintlab.events import build_events
+    from scintlab.app import create_app
+
+    day = root / "products" / "TE-HO3" / "20241010"
+    day.mkdir(parents=True)
+    m = _minutes([0.3, 0.3, 0.1, 0.5], prn="G01")
+    m["azim"] = 180.0
+    m.to_parquet(day / "minute.parquet")
+    (day / "meta.json").write_text(json.dumps({"receiver": "TE-HO3", "rx_type": "sc3", "date": "2024-10-10"}))
+    (root / "inventory").mkdir()
+    pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]}).to_csv(
+        root / "inventory" / "receivers.csv", index=False)
+    pd.DataFrame({"receiver": ["TE-HO3"], "date": ["2024-10-10"], "reason": ["forced"]}).to_csv(
+        root / "days.csv", index=False)
+    build_events()
+    c = create_app().test_client()
+    for url in ("/api/bootstrap", "/api/summary", "/api/queue"):
+        assert c.get(url).status_code == 200, url
+    eid = c.get("/api/queue").json["events"][0]["event_id"]
+    r = c.get(f"/api/event/{eid}")
+    assert r.status_code == 200 and isinstance(r.json["candidate_minutes"], list)
+    r = c.post(f"/api/event/{eid}/label", json={"action": "label", "label": "Multipath", "confidence": "High"})
+    assert r.status_code == 200
+    assert c.get(f"/api/event/{eid}").json["decision"]["label"] == "Multipath"
