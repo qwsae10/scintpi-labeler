@@ -28,3 +28,6 @@ include = ["scintlab*"]
 
 [tool.setuptools.package-data]
 scintlab = ["default_config.yaml", "templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["legacy_mothersday"]
