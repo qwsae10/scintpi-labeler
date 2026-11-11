@@ -9,8 +9,9 @@ paths:
   raw_root: /mfs/io/groups/uars/scintpi
   # Temporary lvl0 files during processing. ${USER} is expanded.
   work_dir: /scratch/ganymede2/${USER}/scint_labeler_work
-  # Septentrio RxTools converter for ScintPi 4 SBF files.
-  bin2asc: /mfs/io/groups/uars/UTD_septentrio/bin2asc
+  # Septentrio RxTools converter for ScintPi 4 SBF files: the Apptainer
+  # wrapper of module rxtools/25.0.0 on ganymede2.
+  bin2asc: /opt/ohpc/pub/apps/rxtools/rxtools_exec.sh bin2asc
 
 candidates:
   # A candidate minute has S4 on this channel above the threshold, elevation

@@ -25,6 +25,13 @@ from scintlab import config
 def _append(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     line = (json.dumps(record, default=str) + "\n").encode()
+    # A crash can leave a last line without its newline; start on a fresh line
+    # so this record is not glued onto the broken one.
+    if path.exists() and path.stat().st_size:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                line = b"\n" + line
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
     try:
         os.write(fd, line)

@@ -101,7 +101,7 @@ def _scintkit_block(paths: list[str], work: Path, cfg: dict):
     from scintkit.products import compute_products
     from scintkit.reading import read_lvl0, to_lvl0
 
-    os.environ.setdefault("SCINTKIT_BIN2ASC", cfg["paths"]["bin2asc"])
+    os.environ["SCINTKIT_BIN2ASC"] = cfg["paths"]["bin2asc"]
     frames = []
     for p in paths:
         try:
