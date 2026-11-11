@@ -1,5 +1,10 @@
 """Candidate events: consecutive candidate minutes of one receiver and satellite.
 
+Gaps of up to ``bridge_gap_minutes`` (5 by default) between candidate minutes
+of the same satellite are bridged, so one disturbance is one decision rather
+than many 1-minute fragments. ``n_minutes`` counts candidate minutes;
+``span_minutes`` is the full length; ``candidate_minutes`` lists them.
+
 A candidate minute has S4 above the threshold on the configured channel,
 elevation above ``min_elevation_deg`` (5 deg by default) and a good S4
 quality flag. The app applies a stricter, user-chosen elevation mask on top.
@@ -57,6 +62,9 @@ def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.D
                 "receiver": meta["receiver"], "rx_type": meta["rx_type"], "date": meta["date"],
                 "day_reason": reason, "prn": prn, "constellation": prn[0],
                 "start_utc": start, "end_utc": end, "n_minutes": int(len(e)),
+                "span_minutes": int(round((end - start).total_seconds() / 60)),
+                # Candidate minutes only; bridged gaps inside the event are not candidates.
+                "candidate_minutes": [t.strftime("%Y-%m-%dT%H:%MZ") for t in e["datetime"]],
                 "peak_s4": float(e[f"s4_{ch}"].max()),
                 "peak_s4_other": float(e[s4b].max()) if s4b and s4b in e and e[s4b].notna().any() else np.nan,
                 "mean_s4": float(e[f"s4_{ch}"].mean()),

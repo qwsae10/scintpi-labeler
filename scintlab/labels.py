@@ -210,6 +210,8 @@ def export() -> dict:
         n_lab = table.groupby(["user", "stratum"])["event_id"].transform("count")
         table["stratum_weight"] = table["stratum"].map(n_all) / n_lab
     table["segments"] = table["segments"].map(json.dumps)
+    if "candidate_minutes" in table:
+        table["candidate_minutes"] = table["candidate_minutes"].map(lambda v: list(v) if v is not None else [])
     table.to_parquet(out_dir / f"labels_{stamp}.parquet", index=False)
     table.to_csv(out_dir / f"labels_{stamp}.csv", index=False)
 
@@ -219,9 +221,12 @@ def export() -> dict:
         lab = pd.Series(r.final_label, index=t, dtype=object)
         for s in json.loads(r.segments):
             lab[(t >= pd.Timestamp(s["start"])) & (t < pd.Timestamp(s["end"]))] = s["label"]
+        cand = set(getattr(r, "candidate_minutes", None) or [])
         minutes.append(pd.DataFrame({"event_id": r.event_id, "receiver": r.receiver, "prn": r.prn,
                                      "user": r.user, "datetime": t, "label": lab.to_numpy(),
-                                     "confidence": r.confidence}))
+                                     "confidence": r.confidence,
+                                     "is_candidate": [x.strftime("%Y-%m-%dT%H:%MZ") in cand for x in t]
+                                     if cand else True}))
     m = pd.concat(minutes, ignore_index=True)
     m.to_parquet(out_dir / f"minute_labels_{stamp}.parquet", index=False)
     return {"events": int(len(table)), "minutes": int(len(m)),

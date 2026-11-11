@@ -117,9 +117,15 @@ def test_events_group_consecutive_minutes(root):
     (day / "meta.json").write_text(json.dumps({"receiver": "TE-HO3", "rx_type": "sc3", "date": "2024-10-10"}))
     rx = pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]})
     days = pd.DataFrame({"receiver": ["TE-HO3"], "date": ["2024-10-10"], "reason": ["forced"]})
-    ev = pd.DataFrame(events_for_day(day, cfg, rx, days))
+    cfg0 = {**cfg, "candidates": {**cfg["candidates"], "bridge_gap_minutes": 0}}
+    ev = pd.DataFrame(events_for_day(day, cfg0, rx, days))
     assert sorted(zip(ev["prn"], ev["n_minutes"])) == [("E11", 1), ("G01", 1), ("G01", 2)]
     assert (ev["day_reason"] == "forced").all()
+    # Default 5-min bridging joins the G01 fragments across the one quiet minute.
+    ev = pd.DataFrame(events_for_day(day, cfg, rx, days))
+    g = ev[ev["prn"] == "G01"].iloc[0]
+    assert len(ev[ev["prn"] == "G01"]) == 1 and g["n_minutes"] == 3 and g["span_minutes"] == 4
+    assert g["candidate_minutes"] == ["2024-10-10T02:00Z", "2024-10-10T02:01Z", "2024-10-10T02:03Z"]
 
 
 def test_stratified_order_cycles_strata():

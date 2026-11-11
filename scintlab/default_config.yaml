@@ -19,9 +19,11 @@ candidates:
   s4_channel: 1
   s4_threshold: 0.2
   min_elevation_deg: 5.0
-  # Consecutive candidate minutes of one receiver and satellite form one event.
-  # Gaps of up to this many minutes are bridged (0 = no bridging).
-  bridge_gap_minutes: 0
+  # Candidate minutes of one receiver and satellite form one event when they
+  # are at most this many missing minutes apart (0 = only consecutive minutes).
+  # Chosen 2026-11-11: 5 min roughly halves the event count by merging
+  # fragments of one pass. Changing it changes event ids and detaches labels.
+  bridge_gap_minutes: 5
 
 processing:
   # 20 Hz samples are stored for every candidate satellite from this many

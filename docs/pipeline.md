@@ -107,7 +107,12 @@ Per receiver-day:
 $S build-events
 ```
 
-Consecutive candidate minutes of one receiver and satellite form an event.
+Candidate minutes of one receiver and satellite form one event when at most
+5 minutes are missing between them (`candidates.bridge_gap_minutes`, chosen
+2026-11-11; this roughly halves the count by merging fragments of one pass).
+`n_minutes` counts candidate minutes, `span_minutes` the whole event, and
+`candidate_minutes` lists them; the minute export marks bridged minutes with
+`is_candidate = false`.
 Each event gets a stable random `queue_rank` and a `stratum` (receiver type ×
 peak-S4 bin 0.2/0.3/0.5 × max-elevation bin 10/20/30°). The default queue
 order (`strat_rank`) takes one event from each stratum in turn. Weak,

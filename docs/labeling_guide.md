@@ -16,8 +16,9 @@ There are three common causes:
 - **Radio-frequency interference (RFI)**: another transmitter or a local
   electronic device raises the noise floor.
 
-The app shows one *event* at a time: one satellite at one receiver, for the
-consecutive minutes when S4 > 0.2. You pick the cause. Your labels become a
+The app shows one *event* at a time: one satellite at one receiver, for a
+stretch of minutes when S4 > 0.2. Gaps of up to 5 quiet minutes are included in
+the event, so one disturbance is one decision. You pick the cause. Your labels become a
 reference ("verification") dataset for testing automatic classifiers, so a
 careful "Unsure" is worth more than a confident guess.
 

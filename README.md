@@ -4,7 +4,8 @@ A browser tool for labeling high-S4 events in ScintPi data, to build a
 verification dataset for scintillation classifiers.
 
 Every satellite-minute with **S4 > 0.2 above 5° elevation** is a candidate.
-Consecutive candidate minutes of one receiver and satellite form an *event*.
+Candidate minutes of one receiver and satellite, at most 5 minutes apart,
+form an *event*.
 A labeler marks each event as **Scintillation**, **Multipath**, **RFI** or
 **Unsure/Artifact**, with **High** or **Low** confidence, and can save hard
 cases for a reviewer. Part of an event can carry its own label.
