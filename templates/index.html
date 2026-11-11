@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Manual GNSS disturbance labeling" />
+    <title>GNSS disturbance labeling</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='3') }}" />
+    <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar closed" id="queue-drawer" aria-hidden="true">
+        <div class="drawer-heading">
+          <h2>Event queue</h2>
+          <button type="button" class="text-button" id="close-queue">Close</button>
+        </div>
+        <section class="progress-panel" aria-labelledby="progress-title">
+          <div class="section-heading">
+            <h1 id="progress-title">Progress</h1>
+            <strong id="progress-percent">0%</strong>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-numbers">
+            <span><strong id="labeled-count">0</strong> labeled</span>
+            <span><strong id="remaining-count">0</strong> remaining</span>
+          </div>
+        </section>
+
+        <form id="filter-form" class="filter-panel">
+          <div class="section-heading">
+            <h2>Filters</h2>
+            <button type="button" class="text-button" id="reset-filters">Reset</button>
+          </div>
+
+          <label>
+            Status
+            <select id="status-filter">
+              <option value="unlabeled">Unlabeled</option>
+              <option value="all">All events</option>
+              <option value="labeled">All labeled</option>
+              <option value="skipped">Skipped</option>
+              <option value="Scintillation">Scintillation</option>
+              <option value="Multipath">Multipath</option>
+              <option value="RFI">RFI</option>
+              <option value="Other">Other / unknown</option>
+            </select>
+          </label>
+
+          <div class="two-column">
+            <label>
+              Station
+              <select id="station-filter"><option value="">All</option></select>
+            </label>
+            <label>
+              Date (UTC)
+              <select id="date-filter"><option value="">All</option></select>
+            </label>
+          </div>
+
+          <label>
+            Satellite
+            <input id="prn-filter" type="search" placeholder="e.g. G12 or E27" autocomplete="off" />
+          </label>
+
+          <div class="two-column">
+            <label>
+              Min peak S4
+              <input id="min-s4-filter" type="number" min="0.2" max="5" step="0.05" placeholder="0.20" />
+            </label>
+            <label>
+              Max peak S4
+              <input id="max-s4-filter" type="number" min="0.2" max="5" step="0.05" placeholder="Any" />
+            </label>
+          </div>
+
+          <button class="secondary-button full-width" type="submit">Apply filters</button>
+          <p class="queue-count"><strong id="queue-count">0</strong> matching events</p>
+        </form>
+      </aside>
+
+      <button type="button" class="drawer-backdrop hidden" id="drawer-backdrop" aria-label="Close event queue"></button>
+
+      <main class="workspace">
+        <div class="topbar">
+          <h1>GNSS disturbance labeling</h1>
+          <button type="button" class="nav-button" id="open-queue" aria-controls="queue-drawer" aria-expanded="false">Event queue</button>
+        </div>
+
+        <div class="event-header">
+          <p class="event-line"><strong id="event-title">Loading...</strong><span id="event-time"></span><span id="queue-position"></span></p>
+          <div class="header-actions">
+            <button type="button" class="nav-button" id="previous-button" aria-label="Previous event">← Previous</button>
+            <button type="button" class="nav-button" id="next-button" aria-label="Next event">Next →</button>
+          </div>
+        </div>
+
+        <dl class="event-values" id="event-values">
+          <div><dt>Peak S4 L1</dt><dd id="peak-s4-l1">n/a</dd></div>
+          <div><dt>Peak S4 L2</dt><dd id="peak-s4-l2">n/a</dd></div>
+          <div><dt>Elevation</dt><dd id="event-elevation">n/a</dd></div>
+        </dl>
+
+        <section class="plot-card" aria-label="Event data plot">
+          <div class="plot-loading" id="plot-loading">
+            <p>Loading...</p>
+          </div>
+          <div id="event-plot"></div>
+        </section>
+
+        <section class="review-card" aria-labelledby="review-heading">
+          <h2 id="review-heading">Label</h2>
+
+          <div class="label-buttons" role="group" aria-label="Event label">
+            <button type="button" class="label-button scintillation" data-label="Scintillation">
+              <kbd>1</kbd><span>Scintillation</span>
+            </button>
+            <button type="button" class="label-button multipath" data-label="Multipath">
+              <kbd>2</kbd><span>Multipath</span>
+            </button>
+            <button type="button" class="label-button rfi" data-label="RFI">
+              <kbd>3</kbd><span>RFI</span>
+            </button>
+            <button type="button" class="label-button other" data-label="Other">
+              <kbd>4</kbd><span>Other / unknown</span>
+            </button>
+          </div>
+
+          <div class="review-details">
+            <fieldset>
+              <legend>Confidence</legend>
+              <label><input type="radio" name="confidence" value="High" /> High</label>
+              <label><input type="radio" name="confidence" value="Medium" checked /> Medium</label>
+              <label><input type="radio" name="confidence" value="Low" /> Low</label>
+            </fieldset>
+            <label class="notes-label">
+              Notes
+              <textarea id="notes" rows="2" placeholder="Optional observation"></textarea>
+            </label>
+            <button type="button" class="skip-button" id="skip-button">Skip</button>
+          </div>
+        </section>
+
+        <section class="empty-state hidden" id="empty-state">
+          <h2>No events.</h2>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="{{ url_for('static', filename='app.js', v='3') }}"></script>
+  </body>
+</html>
