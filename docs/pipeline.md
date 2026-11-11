@@ -136,9 +136,9 @@ folder (for example a local copy for development).
 
 ## Known limitations
 
-- The ScintPi 2 time stamp is assumed to be GPS time of day (converted to UTC
-  with 18 leap seconds). This is not yet verified against a co-located
-  ScintPi 3.
+- The ScintPi 2 time stamp is taken as UTC time of day. This was checked
+  against the co-located ScintPi 3 at Tegucigalpa: subtracting 18 leap seconds
+  left the ScintPi 2 data about 18 s early (see `scintlab/sc2.py`).
 - SP3 geometry exists only up to the last TECbase orbit day (2026-10-25 at
   setup). Later ScintPi 4 days without SatVisibility1 have no elevation and
   therefore no candidates.

@@ -52,7 +52,7 @@ def test_read_sc2_layout_and_time(tmp_path):
         zf.write(raw, raw.name)
     df = read_sc2(z)
     assert list(df["prn"]) == ["G10", "S31", "G10", "E04"]
-    assert df["datetime"].iloc[0] == pd.Timestamp("2023-09-02 17:59:42.050")
+    assert df["datetime"].iloc[0] == pd.Timestamp("2023-09-02 18:00:00.050")
     assert np.isnan(df["snr1"].iloc[2])
     assert df["elev"].iloc[0] == 39 and df["azim"].iloc[3] == 200
 

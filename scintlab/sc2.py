@@ -17,9 +17,11 @@ scintkit has no ScintPi 2 reader. The layout below was read from the bytes of
 ScintPi 2 logs only C/N0 of one signal (L1), so it has no carrier phase,
 no second frequency, no sigma-phi and no TEC.
 
-Time scale: the time of day is assumed to be GPS time, as u-blox iTOW is, and
-is converted to UTC by subtracting 18 leap seconds. ``check_time_offset`` in
-``scintlab.checks`` tests this against a co-located ScintPi 3.
+Time scale: the time of day is UTC. Checked 2026-11-11 against the co-located
+ScintPi 3 TE-HO3 (500 m away) on 2024-10-10: cross-correlating 20 Hz C/N0
+during scintillation (C35, E03, G02, G09, R14; peak r 0.2-0.5) put the ScintPi 2
+stamps 13-28 s early, median about 18 s, when 18 leap seconds were subtracted.
+No satellite matched near zero lag, so no leap-second correction is applied.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ RECORD = np.dtype([
     ("tod_ms", "<u4"), ("ms", "<u4"), ("svid", "<u2"), ("gnss", "u1"), ("cno", "u1"),
     ("elev", "<i4"), ("azim", "<i4"),
 ])
-LEAP_SECONDS = 18
+LEAP_SECONDS = 0  # time of day is already UTC (see module docstring)
 GNSS = {0: ("GPS", "G"), 1: ("SBAS", "S"), 2: ("GAL", "E"), 3: ("BDS", "C"), 5: ("QZSS", "J"), 6: ("GLO", "R")}
 SIGNAL = {"GPS": "GPS_L1CA", "SBAS": "SBAS_L1", "GAL": "GAL_E1", "BDS": "BDS_B1I", "QZSS": "QZSS_L1CA",
           "GLO": "GLO_L1"}
