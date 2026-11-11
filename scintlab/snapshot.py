@@ -105,6 +105,7 @@ def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, rec
         ev = ev[ev["receiver"].isin(receivers)]
     ev = ev.sort_values(order if order in ev else "queue_rank").head(n)
     parts: dict[tuple, list] = defaultdict(list)
+    last_day = None
 
     def add(rx, kind, df):
         if df is None or df.empty:
@@ -113,8 +114,12 @@ def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, rec
             parts[(rx, day, kind)].append(g)
 
     day_minutes_done = set()
-    for e in ev.itertuples():
+    # Day by day, so only a few day files are in memory at once (login nodes allow 8 GB).
+    for e in ev.sort_values(["receiver", "date", "start_utc"]).itertuples():
         rx, prn = e.receiver, e.prn
+        if (rx, e.date) != last_day:
+            data.clear_cache()
+            last_day = (rx, e.date)
         t0, t1 = e.start_utc - PAD, e.end_utc + PAD
         add(rx, "second", data.window(rx, "second", t0, t1))
         add(rx, "minute", data.window(rx, "minute", t0.floor("min"), t1))

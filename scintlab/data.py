@@ -17,8 +17,28 @@ def day_dir(receiver: str, date: str) -> Path:
     return config.products_dir() / receiver / date.replace("-", "")
 
 
-@lru_cache(maxsize=16)
 def _read(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
+    # A day of 1 s data is ~300 MB in memory and ganymede login nodes allow 8 GB
+    # per process, so few second tables are cached; minute tables are small.
+    return (_read_second if kind == "second" else _read_small)(receiver, date, kind)
+
+
+@lru_cache(maxsize=3)
+def _read_second(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
+    return _load(receiver, date, kind)
+
+
+@lru_cache(maxsize=24)
+def _read_small(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
+    return _load(receiver, date, kind)
+
+
+def clear_cache() -> None:
+    _read_second.cache_clear()
+    _read_small.cache_clear()
+
+
+def _load(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
     path = day_dir(receiver, date) / f"{kind}.parquet"
     if not path.exists():
         return None

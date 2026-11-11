@@ -173,7 +173,7 @@ folder (for example a local copy for development).
 To let someone try the labeler without a ganymede account:
 
 ```bash
-$S snapshot --n 50                       # first 50 events of the stratified queue above 10°
+srun -p rodrigues -c 1 --mem=16G -t 60 $S snapshot --n 50   # first 50 of the stratified queue above 10°
 $S snapshot --n 30 --receiver TE-HO3 --receiver BR-RS1 --elev-mask 20 --out snapshots/demo_small
 ```
 
