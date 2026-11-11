@@ -4,6 +4,7 @@
 #SBATCH --time=08:00:00
 set -euo pipefail
 cd /titan/frodrigues/scint_labeler
+source /etc/profile.d/lmod.sh && module load rxtools/25.0.0   # bin2asc for ScintPi 4 (Apptainer)
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1} OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 echo "host $(hostname) code $(git -C code rev-parse --short HEAD)"
 env/bin/scintlab process --receiver "$1" --date "$2" ${3:-}
