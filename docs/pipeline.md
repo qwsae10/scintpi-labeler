@@ -149,3 +149,16 @@ folder (for example a local copy for development).
 - The high-pass filter is causal and scintkit flags σφ within 180 s of an arc
   edge or gap. Flagged σφ is drawn as grey open circles.
 - GLONASS σφ is always flagged by scintkit.
+
+## Adding a labeler
+
+1. They need a ganymede2 account and membership in the `uars` group
+   (`/titan/frodrigues` is `drwxrws--- root:uars`). Ask CIRC or a `uars`
+   group admin to add them.
+2. `labels/` and `labels/settings/` are setgid and group-writable (`2775`),
+   so their label file is created on first save.
+3. The GitHub repository is private. Add them as a collaborator (read
+   access) so they can read the docs.
+4. Send them `docs/connecting.md` and `docs/labeling_guide.md`.
+5. To make someone a reviewer, add their NetID to `labels.reviewers` in
+   `/titan/frodrigues/scint_labeler/config.yaml`.
