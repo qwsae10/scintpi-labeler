@@ -339,6 +339,7 @@ function openSettings() {
   S.boot.tab_order.forEach((t) => dt.add(new Option(S.boot.tab_titles[t], t)));
   ["default_tab", "queue_order", "pad_minutes", "comparison_satellites", "elevation_mask_deg", "highrate_decimate_hz"]
     .forEach((k) => { $(`#set-${k}`).value = st[k]; });
+  ["show_tau", "show_s4_corrected"].forEach((k) => { $(`#set-${k}`).checked = !!st[k]; });
   $("#settings").showModal();
 }
 
@@ -349,6 +350,7 @@ async function saveSettings() {
   const body = { tabs };
   ["default_tab", "queue_order"].forEach((k) => { body[k] = $(`#set-${k}`).value; });
   ["pad_minutes", "comparison_satellites", "elevation_mask_deg", "highrate_decimate_hz"].forEach((k) => { body[k] = Number($(`#set-${k}`).value); });
+  ["show_tau", "show_s4_corrected"].forEach((k) => { body[k] = $(`#set-${k}`).checked; });
   S.settings = await post("/api/settings", body);
   $("#pad").value = S.settings.pad_minutes;
   $("#f-elev_mask").value = S.settings.elevation_mask_deg;
@@ -361,6 +363,11 @@ async function saveSettings() {
 
 /* ------------------------------------------------------------------ keys */
 
+function toggleQueue() {
+  document.body.classList.toggle("no-queue");
+  setTimeout(() => { if ($("#plot").data) Plotly.Plots.resize("plot"); }, 50);
+}
+
 function bind() {
   $("#filters").addEventListener("submit", async (e) => { e.preventDefault(); S.index = 0; await loadSummary(); await loadQueue(); });
   $("#prev").addEventListener("click", () => move(-1));
@@ -369,7 +376,7 @@ function bind() {
   $("#clear").addEventListener("click", async () => { if (await save({ action: "clear" }, "Label cleared")) { await loadSummary(); await loadEvent(); } });
   $$("[data-conf]").forEach((b) => b.addEventListener("click", () => setConfidence(b.dataset.conf)));
   $("#seg-add").addEventListener("click", addSegment);
-  $("#toggle-queue").addEventListener("click", () => document.body.classList.toggle("no-queue"));
+  $("#toggle-queue").addEventListener("click", toggleQueue);
   $("#open-settings").addEventListener("click", openSettings);
   $("#open-help").addEventListener("click", () => $("#help").showModal());
   $("#settings").addEventListener("close", () => { if ($("#settings").returnValue === "save") saveSettings(); });
@@ -394,7 +401,7 @@ function bind() {
     else if (k === "l") setConfidence("Low");
     else if (k === "r") $("#for-review").checked = !$("#for-review").checked;
     else if (k === "s") $("#skip").click();
-    else if (k === "q") document.body.classList.toggle("no-queue");
+    else if (k === "q") toggleQueue();
     else if (k === "?") $("#help").showModal();
     else if (e.key === "ArrowRight") move(1);
     else if (e.key === "ArrowLeft") move(-1);

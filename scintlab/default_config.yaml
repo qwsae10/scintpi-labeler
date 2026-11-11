@@ -72,6 +72,8 @@ display:
   # stratum in turn; random: uniform; chronological: by receiver and time.
   queue_order: stratified
   highrate_decimate_hz: 20      # 20 = full rate; lower values plot faster
+  show_tau: false               # τ (1/e decorrelation time) panel in the Overview
+  show_s4_corrected: false      # receiver-noise-corrected S4 as a dotted line
 
 server:
   host: 127.0.0.1

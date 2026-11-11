@@ -168,3 +168,31 @@ def test_app_endpoints_on_built_events(root):
     r = c.post(f"/api/event/{eid}/label", json={"action": "label", "label": "Multipath", "confidence": "High"})
     assert r.status_code == 200
     assert c.get(f"/api/event/{eid}").json["decision"]["label"] == "Multipath"
+
+
+def test_snapshot_builds_self_contained_folder(root, tmp_path):
+    from scintlab.events import build_events
+    from scintlab.snapshot import make_snapshot
+
+    day = root / "products" / "TE-HO3" / "20241010"
+    day.mkdir(parents=True)
+    m = _minutes([0.3, 0.3, 0.1, 0.5], prn="G01", elev=30.0)
+    m["azim"] = 180.0
+    m.to_parquet(day / "minute.parquet")
+    sec = pd.DataFrame({"datetime": pd.date_range("2024-10-10 01:30", "2024-10-10 03:00", freq="1s"), "prn": "G01"})
+    sec["elev"], sec["azim"], sec["snr1"] = 30.0, 180.0, 45.0
+    sec.to_parquet(day / "second.parquet")
+    (day / "meta.json").write_text(json.dumps({"receiver": "TE-HO3", "rx_type": "sc3", "date": "2024-10-10"}))
+    (root / "inventory").mkdir()
+    pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]}).to_csv(
+        root / "inventory" / "receivers.csv", index=False)
+    pd.DataFrame({"receiver": ["TE-HO3"], "date": ["2024-10-10"], "reason": ["forced"]}).to_csv(
+        root / "days.csv", index=False)
+    build_events()
+    out = tmp_path / "snap"
+    res = make_snapshot(out, n=5)
+    assert res["events"] >= 1 and (out / "events" / "events.parquet").exists()
+    assert (out / "app" / "scintlab" / "app.py").exists() and (out / "run_mac_linux.sh").exists()
+    s = pd.read_parquet(out / "products" / "TE-HO3" / "20241010" / "second.parquet")
+    assert s["datetime"].dt.tz is None and len(s) > 0
+    assert (tmp_path / "snap.zip").exists()

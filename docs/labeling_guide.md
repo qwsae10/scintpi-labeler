@@ -52,10 +52,11 @@ for later. Nothing is lost if you close the browser.
   unless the antenna sits near a wall or metal object (look at the sky map).
 - **S4 on both frequencies**: scintillation usually raises S4 on L1 *and* L2
   (L2 often more). Multipath can be very different on the two frequencies.
-- **σφ** (phase scintillation, receiver clock removed): high σφ together with
-  high S4 points to the ionosphere. Grey open circles are flagged values
-  (near a gap or arc edge): ignore them.
-- **τ** (decorrelation time, the 1/e point of the intensity autocorrelation):
+- **σφ** (bottom panel; phase scintillation, receiver clock removed): high σφ
+  together with high S4 points to the ionosphere. Grey open circles are
+  flagged values (near a gap or arc edge): ignore them. The axis is scaled to
+  the good values, so flagged points may sit above the top.
+- **τ** (optional panel, turn on in Settings; the 1/e point of the intensity autocorrelation):
   scintillation gives short τ, typically 0.1–1 s. Multipath gives long τ
   (several seconds or undefined), because it varies slowly.
 - **TEC**: a dip or wiggle in TEC around the event often goes with plasma

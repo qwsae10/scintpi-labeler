@@ -109,6 +109,17 @@ def cmd_serve(args):
     app.run(host=host, port=port, debug=False, threaded=True)
 
 
+def cmd_snapshot(args):
+    from scintlab.snapshot import make_snapshot
+
+    out = args.out or str(config.data_root() / "snapshots" / f"snapshot_{pd.Timestamp.utcnow():%Y%m%d_%H%M}")
+    res = make_snapshot(out, n=args.n, elev_mask=args.elev_mask, receivers=args.receiver or None,
+                        make_zip=not args.no_zip)
+    print(json.dumps(res, indent=2))
+    if "zip" in res:
+        print(f"\nCopy it to a laptop with:\n  scp {config.current_user()}@ganymede2.utdallas.edu:{res['zip']} .")
+
+
 def cmd_export(args):
     from scintlab.labels import export
 
@@ -145,6 +156,13 @@ def main(argv=None):
     s.add_argument("--host")
     s.add_argument("--port", type=int)
     s.set_defaults(func=cmd_serve)
+    s = sub.add_parser("snapshot", help="write N events and the app to a folder + zip for offline use")
+    s.add_argument("--n", type=int, default=50)
+    s.add_argument("--elev-mask", type=float, default=10.0)
+    s.add_argument("--receiver", action="append", help="limit to these receivers (repeatable)")
+    s.add_argument("--out", help="output folder (default <data_root>/snapshots/snapshot_<time>)")
+    s.add_argument("--no-zip", action="store_true")
+    s.set_defaults(func=cmd_snapshot)
     sub.add_parser("export", help="write the merged labels to CSV and Parquet").set_defaults(func=cmd_export)
     sub.add_parser("stats", help="print labeling progress").set_defaults(func=cmd_stats)
     args = p.parse_args(argv)

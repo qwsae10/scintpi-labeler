@@ -17,7 +17,7 @@ ganymede2.
 
 | Tab | Shows |
 |---|---|
-| Overview | 1 s C/N₀ on every frequency; elevation and azimuth; 1-min S4, σφ (receiver clock removed) and τ (1/e decorrelation time) per frequency; relative slant TEC |
+| Overview | 1 s C/N₀ on every frequency; elevation and azimuth; 1-min S4; relative slant TEC; σφ (receiver clock removed) last. Optional in Settings: τ (1/e decorrelation time) and noise-corrected S4 |
 | 20 Hz | full-rate C/N₀ and clock-removed detrended carrier phase per frequency, with cycle slips |
 | Other satellites | C/N₀ of the best-covered other satellites; S4 of every satellite as a heat map; how many satellites exceed S4 0.2 each minute |
 | Sidereal repeat | the same satellite on the day before and after, at the same azimuth and elevation (multipath repeats, scintillation does not) |
@@ -37,6 +37,16 @@ Settings page.
 
 You can stop at any time. Every key press is saved on ganymede immediately,
 and the queue resumes where you left off.
+
+## Offline snapshot (no ganymede account needed)
+
+On ganymede, `scintlab snapshot --n 50` writes 50 events, a copy of the app
+and launchers to `/titan/frodrigues/scint_labeler/snapshots/<name>.zip`
+(about 100–150 MB). Copy the zip to any laptop with Python 3.10+, unzip it and
+run `bash run_mac_linux.sh` (or double-click `run_windows.bat` on Windows).
+Labels are saved in the snapshot's `labels/<user>.jsonl` with the same event
+ids as on ganymede, so that file can be copied into the shared `labels/`
+folder. Details: [docs/pipeline.md](docs/pipeline.md#offline-snapshots).
 
 ## For maintainers
 

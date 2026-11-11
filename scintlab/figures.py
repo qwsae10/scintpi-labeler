@@ -60,6 +60,46 @@ def _signal_names(minute: pd.DataFrame) -> dict[int, str]:
     return names
 
 
+# Values beyond these are filter-edge or leveling artefacts, never physical.
+PHASE_LIMIT_RAD = 50.0
+SIGMA_PHI_LIMIT_RAD = 10.0
+TEC_LIMIT_TECU = 1000.0
+
+
+def robust_range(values, lo_q=0.5, hi_q=99.5, pad=0.1, zero=False, symmetric=False, min_span=None):
+    """Axis range from quantiles of the finite values, so a few outliers cannot squash the plot."""
+    v = np.asarray(pd.to_numeric(pd.Series(values), errors="coerce"), dtype=float)
+    v = v[np.isfinite(v)]
+    if not len(v):
+        return None
+    if symmetric:
+        m = float(np.percentile(np.abs(v), hi_q)) * (1 + pad)
+        m = max(m, min_span or 0)
+        return [-m, m]
+    lo, hi = float(np.percentile(v, lo_q)), float(np.percentile(v, hi_q))
+    if zero:
+        lo = 0.0
+    span = hi - lo
+    if min_span and span < min_span:
+        hi = lo + min_span
+        span = min_span
+    return [lo if zero else lo - pad * span, hi + pad * span]
+
+
+def _yaxis_rows(fig, rows):
+    """Map each y-axis name ('y', 'y2', ...) to its subplot row, secondary axes included."""
+    out = {}
+    for r in range(1, rows + 1):
+        name = fig.get_subplot(r, 1).yaxis.plotly_name.replace("axis", "")
+        out[name] = r
+    for key in fig.layout:
+        if key.startswith("yaxis"):
+            ax = fig.layout[key]
+            if getattr(ax, "overlaying", None) and ax.overlaying in out:
+                out[key.replace("axis", "")] = out[ax.overlaying]
+    return out
+
+
 def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
     for r in range(1, rows + 1):
         fig.add_vrect(x0=start, x1=end, fillcolor=SHADE, opacity=0.16, line_width=0, row=r, col=1)
@@ -67,11 +107,19 @@ def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
     fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False)
     fig.update_xaxes(title_text="Time (UTC)", row=rows, col=1)
     fig.update_layout(
-        height=height, margin={"l": 70, "r": 60, "t": 80, "b": 45}, paper_bgcolor="white", plot_bgcolor="white",
-        font={"family": "Inter, system-ui, sans-serif", "size": 12}, hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "top", "y": 0.995, "yref": "container", "x": 0, "font": {"size": 11}},
-        uirevision="keep",
+        height=height, margin={"l": 70, "r": 60, "t": 50, "b": 45}, paper_bgcolor="white", plot_bgcolor="white",
+        font={"family": "Inter, system-ui, sans-serif", "size": 12}, hovermode="x unified", uirevision="keep",
     )
+    # One legend per panel, right-aligned on the panel's title line.
+    ymap = _yaxis_rows(fig, rows)
+    for tr in fig.data:
+        r = ymap.get(tr.yaxis or "y", 1)
+        tr.legend = "legend" if r == 1 else f"legend{r}"
+    for r in range(1, rows + 1):
+        top = fig.get_subplot(r, 1).yaxis.domain[1]
+        fig.update_layout(**{("legend" if r == 1 else f"legend{r}"): {
+            "orientation": "h", "x": 1, "xanchor": "right", "y": top, "yanchor": "bottom",
+            "font": {"size": 10}, "bgcolor": "rgba(255,255,255,0)", "itemsizing": "constant"}})
     for a in fig.layout.annotations:
         if a.xanchor == "center" and a.yanchor == "bottom":  # subplot titles from make_subplots
             a.font = {"size": 12, "color": "#344054"}
@@ -101,52 +149,89 @@ def overview(event: dict, settings: dict) -> dict:
     names = _signal_names(mins)
     mask = float(settings.get("elevation_mask_deg", 10))
     thr = float(config.load()["candidates"]["s4_threshold"])
-    fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.035,
-                        row_heights=[0.2, 0.13, 0.17, 0.17, 0.17, 0.16],
-                        specs=[[{}], [{"secondary_y": True}], [{}], [{}], [{}], [{}]],
-                        subplot_titles=(f"C/N₀ · {rx} {prn} (1 s)", "Elevation and azimuth",
-                                        "S4 (1 min; dotted = receiver noise removed)", "σφ, clock removed (1 min; grey = quality flag)",
-                                        "τ, 1/e decorrelation time (1 min)", "Relative slant TEC (carrier phase)"))
+    show_tau = bool(settings.get("show_tau", False)) and bool(_channels(mins, "tau1e_"))
+    show_s4c = bool(settings.get("show_s4_corrected", False))
+    has_tec = "tec_cph12" in sec and sec["tec_cph12"].abs().lt(TEC_LIMIT_TECU).any()
+    has_sp = bool(_channels(mins, "sigma_phi_"))
+
+    panels = [("cn0", f"C/N₀ · {rx} {prn} (1 s)", 0.22), ("geo", "Elevation and azimuth", 0.13),
+              ("s4", "S4 (1 min)" + ("; dotted = receiver noise removed" if show_s4c else ""), 0.18)]
+    if show_tau:
+        panels.append(("tau", "τ, 1/e decorrelation time (1 min)", 0.15))
+    if has_tec:
+        panels.append(("tec", "Relative slant TEC (carrier phase)", 0.15))
+    if has_sp:
+        panels.append(("sp", "σφ, receiver clock removed (1 min; grey = quality flag)", 0.18))
+    row = {k: i + 1 for i, (k, _, _) in enumerate(panels)}
+    n = len(panels)
+    fig = make_subplots(rows=n, cols=1, shared_xaxes=True, vertical_spacing=0.045,
+                        row_heights=[h for _, _, h in panels],
+                        specs=[[{"secondary_y": k == "geo"}] for k, _, _ in panels],
+                        subplot_titles=[t for _, t, _ in panels])
+
     for i in _channels(sec, "snr"):
-        _line(fig, sec["datetime"], sec[f"snr{i}"], f"C/N₀ {names[i]}", 1, CH_COLORS[i], unit=" dB-Hz")
-    _line(fig, sec["datetime"], sec["elev"], "Elevation", 2, "#d94a5a", width=1.8)
-    _line(fig, sec["datetime"], sec["azim"], "Azimuth", 2, "#7c5ce5", secondary=True)
-    fig.add_hline(y=mask, line_dash="dot", line_color="#d94a5a", line_width=1, row=2, col=1)
+        _line(fig, sec["datetime"], sec[f"snr{i}"], f"C/N₀ {names[i]}", row["cn0"], CH_COLORS[i], unit=" dB-Hz")
+    _line(fig, sec["datetime"], sec["elev"], "Elevation", row["geo"], "#d94a5a", width=1.8)
+    _line(fig, sec["datetime"], sec["azim"], "Azimuth", row["geo"], "#7c5ce5", secondary=True)
+    fig.add_hline(y=mask, line_dash="dot", line_color="#d94a5a", line_width=1, row=row["geo"], col=1)
+
+    s4_all = []
     for i in _channels(mins, "s4_"):
-        _line(fig, mins["datetime"], mins[f"s4_{i}"], f"S4 {names[i]}", 3, CH_COLORS[i], mode="lines+markers",
-              gl=False)
-        if f"s4_corrected_{i}" in mins and mins[f"s4_corrected_{i}"].notna().any():
-            _line(fig, mins["datetime"], mins[f"s4_corrected_{i}"], f"S4 noise-corrected {names[i]}", 3,
+        _line(fig, mins["datetime"], mins[f"s4_{i}"], f"S4 {names[i]}", row["s4"], CH_COLORS[i],
+              mode="lines+markers", gl=False)
+        s4_all.append(mins[f"s4_{i}"])
+        if show_s4c and f"s4_corrected_{i}" in mins and mins[f"s4_corrected_{i}"].notna().any():
+            _line(fig, mins["datetime"], mins[f"s4_corrected_{i}"], f"S4 corr. {names[i]}", row["s4"],
                   CH_COLORS[i], dash="dot", width=1.1, gl=False)
-    fig.add_hline(y=thr, line_dash="dash", line_color="#c23b4a", line_width=1.2, row=3, col=1)
-    for i in _channels(mins, "sigma_phi_"):
-        good = mins[f"sigma_phi_quality_flag_{i}"].eq(0) if f"sigma_phi_quality_flag_{i}" in mins else True
-        _line(fig, mins["datetime"], mins[f"sigma_phi_{i}"].where(good), f"σφ {names[i]}", 4, CH_COLORS[i],
-              mode="lines+markers", gl=False, unit=" rad")
-        bad = mins[f"sigma_phi_{i}"].where(~good)
-        if bad.notna().any():
-            fig.add_trace(go.Scatter(x=mins["datetime"], y=bad, mode="markers", name=f"σφ {names[i]} flagged",
-                                     marker={"size": 5, "color": "#98a2b3", "symbol": "circle-open"},
-                                     showlegend=False, hovertemplate="flagged σφ %{y:.3f}<extra></extra>"),
-                          row=4, col=1)
-    for i in _channels(mins, "tau1e_"):
-        _line(fig, mins["datetime"], mins[f"tau1e_{i}"], f"τ {names[i]}", 5, CH_COLORS[i], mode="lines+markers",
-              gl=False, unit=" s")
-    if "tec_cph12" in sec and sec["tec_cph12"].notna().any():
-        tec = sec["tec_cph12"] - sec["tec_cph12"].min()
-        _line(fig, sec["datetime"], tec, "STEC", 6, "#1d2939", unit=" TECU")
-    fig.update_yaxes(title_text="dB-Hz", row=1, col=1)
-    fig.update_yaxes(title_text="Elev (°)", range=[0, 92], row=2, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="Azim (°)", range=[0, 360], row=2, col=1, secondary_y=True, showgrid=False)
-    fig.update_yaxes(title_text="S4", rangemode="tozero", row=3, col=1)
-    fig.update_yaxes(title_text="rad", rangemode="tozero", row=4, col=1)
-    fig.update_yaxes(title_text="s", rangemode="tozero", row=5, col=1)
-    fig.update_yaxes(title_text="TECU", row=6, col=1)
+    fig.add_hline(y=thr, line_dash="dash", line_color="#c23b4a", line_width=1.2, row=row["s4"], col=1)
+    s4r = robust_range(pd.concat(s4_all) if s4_all else [], hi_q=100, zero=True, min_span=thr * 1.5)
+
+    if show_tau:
+        taus = []
+        for i in _channels(mins, "tau1e_"):
+            _line(fig, mins["datetime"], mins[f"tau1e_{i}"], f"τ {names[i]}", row["tau"], CH_COLORS[i],
+                  mode="lines+markers", gl=False, unit=" s")
+            taus.append(mins[f"tau1e_{i}"])
+        fig.update_yaxes(title_text="s", range=robust_range(pd.concat(taus), hi_q=99, zero=True, min_span=0.5),
+                         row=row["tau"], col=1)
+
+    if has_tec:
+        tec = sec["tec_cph12"].where(sec["tec_cph12"].abs() < TEC_LIMIT_TECU)
+        tec = tec - np.nanpercentile(tec, 1)
+        _line(fig, sec["datetime"], tec, "STEC", row["tec"], "#1d2939", unit=" TECU")
+        fig.update_yaxes(title_text="TECU", range=robust_range(tec, lo_q=2, hi_q=98, pad=0.2, min_span=1.0),
+                         row=row["tec"], col=1)
+
+    if has_sp:
+        good_vals = []
+        for i in _channels(mins, "sigma_phi_"):
+            sp = mins[f"sigma_phi_{i}"].where(mins[f"sigma_phi_{i}"] < SIGMA_PHI_LIMIT_RAD)
+            good = mins[f"sigma_phi_quality_flag_{i}"].eq(0) if f"sigma_phi_quality_flag_{i}" in mins else True
+            _line(fig, mins["datetime"], sp.where(good), f"σφ {names[i]}", row["sp"], CH_COLORS[i],
+                  mode="lines+markers", gl=False, unit=" rad")
+            good_vals.append(sp.where(good))
+            bad = sp.where(~good)
+            if bad.notna().any():
+                fig.add_trace(go.Scatter(x=mins["datetime"], y=bad, mode="markers", name=f"σφ {names[i]} flagged",
+                                         marker={"size": 5, "color": "#98a2b3", "symbol": "circle-open"},
+                                         showlegend=False, hovertemplate="flagged σφ %{y:.3f}<extra></extra>"),
+                              row=row["sp"], col=1)
+        # Range from the good values only; flagged points above it are off the chart.
+        fig.update_yaxes(title_text="rad", range=robust_range(pd.concat(good_vals), hi_q=100, zero=True,
+                                                              min_span=0.2), row=row["sp"], col=1)
+
+    fig.update_yaxes(title_text="dB-Hz", range=robust_range(pd.concat([sec[f"snr{i}"] for i in _channels(sec, "snr")])
+                                                            if _channels(sec, "snr") else [], lo_q=0.2, hi_q=99.8,
+                                                            min_span=6), row=row["cn0"], col=1)
+    fig.update_yaxes(title_text="Elev (°)", range=[0, 92], row=row["geo"], col=1, secondary_y=False)
+    fig.update_yaxes(title_text="Azim (°)", range=[0, 360], row=row["geo"], col=1, secondary_y=True, showgrid=False)
+    fig.update_yaxes(title_text="S4", range=s4r, row=row["s4"], col=1)
     if event.get("rx_type") == "sc2":
         fig.add_annotation(text="ScintPi 2: integer L1 C/N₀ only (no phase, L2 or TEC)", xref="paper",
-                           yref="paper", x=1, y=1.0, yshift=22, xanchor="right", yanchor="bottom", showarrow=False,
-                           font={"color": "#b54708"})
-    return _layout(fig, 1150, start, end, t0, t1, 6)
+                           yref="paper", x=0.5, y=1.0, yshift=4, xanchor="center", yanchor="bottom",
+                           showarrow=False, font={"color": "#b54708", "size": 11})
+    heights = {"cn0": 230, "geo": 140, "s4": 190, "tau": 160, "tec": 160, "sp": 190}
+    return _layout(fig, sum(heights[k] for k, _, _ in panels) + 120, start, end, t0, t1, n)
 
 
 # --------------------------------------------------------------------------- high rate
@@ -170,23 +255,28 @@ def highrate(event: dict, settings: dict) -> dict:
     rows = len(snr_ch) + len(ph_ch)
     rate = "min/max envelope, zoom in for every sample" if reduced else "every sample"
     titles = [f"C/N₀ {names[i]} ({rate})" for i in snr_ch] + \
-             [f"Detrended phase, receiver clock removed, {names[i]} (0.1 Hz high-pass)" for i in ph_ch]
+             [f"Detrended phase, receiver clock removed, {names[i]} (0.1 Hz high-pass; |φ| > 50 rad hidden)"
+              for i in ph_ch]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04, subplot_titles=titles)
     r = 1
     for i in snr_ch:
         _line(fig, *envelope(hr["datetime"], hr[f"snr{i}"]), f"C/N₀ {names[i]}", r, CH_COLORS[i], width=0.8,
               unit=" dB-Hz")
-        fig.update_yaxes(title_text="dB-Hz", row=r, col=1)
+        fig.update_yaxes(title_text="dB-Hz", range=robust_range(hr[f"snr{i}"], lo_q=0.1, hi_q=99.9, min_span=6),
+                         row=r, col=1)
         r += 1
     for i in ph_ch:
-        _line(fig, *envelope(hr["datetime"], hr[f"ph{i}"]), f"φ {names[i]}", r, CH_COLORS[i], width=0.8,
-              unit=" rad")
+        # Filter edges after gaps produce huge values; hide them and scale to the rest.
+        ph = hr[f"ph{i}"].where(hr[f"ph{i}"].abs() < PHASE_LIMIT_RAD)
+        _line(fig, *envelope(hr["datetime"], ph), f"φ {names[i]}", r, CH_COLORS[i], width=0.8, unit=" rad")
         slip = hr.get(f"slip{i}")
         if slip is not None and slip.fillna(False).astype(bool).any():
-            s = hr[slip.fillna(False).astype(bool)]
-            fig.add_trace(go.Scattergl(x=s["datetime"], y=s[f"ph{i}"], mode="markers", name=f"cycle slip {names[i]}",
+            sl = slip.fillna(False).astype(bool) & ph.notna()
+            fig.add_trace(go.Scattergl(x=hr.loc[sl, "datetime"], y=ph[sl], mode="markers",
+                                       name=f"cycle slip {names[i]}",
                                        marker={"color": "#d92d20", "size": 7, "symbol": "x"}), row=r, col=1)
-        fig.update_yaxes(title_text="rad", row=r, col=1)
+        fig.update_yaxes(title_text="rad", range=robust_range(ph, hi_q=99.5, symmetric=True, pad=0.25,
+                                                              min_span=0.3), row=r, col=1)
         r += 1
     out = _layout(fig, 230 * rows + 80, start, end, t0, t1, rows)
     if view:

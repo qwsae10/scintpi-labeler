@@ -167,3 +167,29 @@ folder (for example a local copy for development).
 4. Send them `docs/connecting.md` and `docs/labeling_guide.md`.
 5. To make someone a reviewer, add their NetID to `labels.reviewers` in
    `/titan/frodrigues/scint_labeler/config.yaml`.
+
+## Offline snapshots
+
+To let someone try the labeler without a ganymede account:
+
+```bash
+$S snapshot --n 50                       # first 50 events of the stratified queue above 10°
+$S snapshot --n 30 --receiver TE-HO3 --receiver BR-RS1 --elev-mask 20 --out snapshots/demo_small
+```
+
+The snapshot is fully interactive for windows up to ±30 min. It includes all
+satellites around each event, the same satellite on the neighbouring days
+(sidereal tab), the event's 20 Hz data and the day's minute table (sky maps).
+The Network tab has only the receivers in the snapshot. Copy the zip to the
+laptop:
+
+```bash
+scp <netid>@ganymede2.utdallas.edu:/titan/frodrigues/scint_labeler/snapshots/<name>.zip .
+```
+
+The recipient unzips it and runs `bash run_mac_linux.sh` (macOS/Linux) or
+`run_windows.bat`. The first run makes `.venv` and installs numpy, pandas,
+pyarrow, pyyaml, flask and plotly (internet needed once). Their labels end up
+in `labels/<their user>.jsonl` inside the snapshot. To merge, copy that file
+to `/titan/frodrigues/scint_labeler/labels/` under a name that is not already
+used.
