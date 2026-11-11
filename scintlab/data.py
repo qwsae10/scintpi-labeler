@@ -28,10 +28,30 @@ def _read(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
     return df
 
 
+def _read_highrate(receiver: str, date: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: str | None):
+    """Filtered read: the 20-50 Hz file of a day is hundreds of MB, so it is never loaded whole."""
+    path = day_dir(receiver, date) / "highrate.parquet"
+    if not path.exists():
+        return None
+    naive = [t.tz_convert("UTC").tz_localize(None) if t.tzinfo else t for t in (t0, t1)]
+    filters = [("datetime", ">=", naive[0]), ("datetime", "<", naive[1])]
+    if prn is not None:
+        filters.append(("prn", "==", prn))
+    df = pd.read_parquet(path, filters=filters)
+    df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_localize("UTC")
+    df["prn"] = df["prn"].astype(str)
+    return df
+
+
 def window(receiver: str, kind: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: str | None = None) -> pd.DataFrame:
     """Rows of ``kind`` (minute, second, highrate) in [t0, t1), joined across UTC days."""
     parts = []
     for d in pd.date_range(t0.floor("D"), t1.floor("D"), freq="D"):
+        if kind == "highrate":
+            df = _read_highrate(receiver, d.strftime("%Y-%m-%d"), t0, t1, prn)
+            if df is not None:
+                parts.append(df)
+            continue
         df = _read(receiver, d.strftime("%Y-%m-%d"), kind)
         if df is None:
             continue

@@ -17,6 +17,24 @@ COMP_COLORS = ["#2f6fed", "#23a7a0", "#8a63d2", "#e17b3a", "#cf4d6f", "#5d8f3f",
                "#aa6d00", "#667085", "#b5487d", "#3c7d9e"]
 
 
+MAX_POINTS = 12000  # per trace; longer series are reduced to a min/max envelope
+
+
+def envelope(t: pd.Series, y: pd.Series, max_points: int = MAX_POINTS):
+    """Reduce a long series to the min and max of each of max_points/2 time bins, keeping deep fades visible."""
+    n = len(y)
+    if n <= max_points:
+        return t, y
+    nb = max_points // 2
+    idx = np.arange(n) * nb // n
+    v = y.to_numpy(dtype=float)
+    df = pd.DataFrame({"b": idx, "v": v, "i": np.arange(n)}).dropna()
+    lo = df.loc[df.groupby("b")["v"].idxmin(), "i"].to_numpy()
+    hi = df.loc[df.groupby("b")["v"].idxmax(), "i"].to_numpy()
+    keep = np.unique(np.concatenate([lo, hi]))
+    return t.iloc[keep], y.iloc[keep]
+
+
 class Missing(Exception):
     """No data for this view; the message is shown to the user."""
 
@@ -133,25 +151,33 @@ def overview(event: dict, settings: dict) -> dict:
 def highrate(event: dict, settings: dict) -> dict:
     start, end, t0, t1 = _times(event, settings)
     rx, prn = event["receiver"], event["prn"]
-    hr = data.window(rx, "highrate", t0, t1, prn)
+    view = None
+    if settings.get("t0") and settings.get("t1"):  # zoomed: reload only the visible range
+        view = (pd.Timestamp(settings["t0"]), pd.Timestamp(settings["t1"]))
+        view = tuple(v.tz_localize("UTC") if v.tzinfo is None else v for v in view)
+    hr = data.window(rx, "highrate", *(view or (t0, t1)), prn)
     if hr.empty:
-        raise Missing("No 20 Hz data stored for this window.")
+        raise Missing("No full-rate data stored for this window.")
     step = max(1, int(round(20 / float(settings.get("highrate_decimate_hz", 20)))))
     hr = hr.iloc[::step]
+    reduced = len(hr) > MAX_POINTS
     mins = data.window(rx, "minute", t0.floor("min"), t1, prn)
     names = _signal_names(mins)
     snr_ch, ph_ch = _channels(hr, "snr"), _channels(hr, "ph")
     rows = len(snr_ch) + len(ph_ch)
-    titles = [f"C/N₀ {names[i]} (full rate)" for i in snr_ch] + \
+    rate = "min/max envelope, zoom in for every sample" if reduced else "every sample"
+    titles = [f"C/N₀ {names[i]} ({rate})" for i in snr_ch] + \
              [f"Detrended phase, receiver clock removed, {names[i]} (0.1 Hz high-pass)" for i in ph_ch]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04, subplot_titles=titles)
     r = 1
     for i in snr_ch:
-        _line(fig, hr["datetime"], hr[f"snr{i}"], f"C/N₀ {names[i]}", r, CH_COLORS[i], width=0.8, unit=" dB-Hz")
+        _line(fig, *envelope(hr["datetime"], hr[f"snr{i}"]), f"C/N₀ {names[i]}", r, CH_COLORS[i], width=0.8,
+              unit=" dB-Hz")
         fig.update_yaxes(title_text="dB-Hz", row=r, col=1)
         r += 1
     for i in ph_ch:
-        _line(fig, hr["datetime"], hr[f"ph{i}"], f"φ {names[i]}", r, CH_COLORS[i], width=0.8, unit=" rad")
+        _line(fig, *envelope(hr["datetime"], hr[f"ph{i}"]), f"φ {names[i]}", r, CH_COLORS[i], width=0.8,
+              unit=" rad")
         slip = hr.get(f"slip{i}")
         if slip is not None and slip.fillna(False).astype(bool).any():
             s = hr[slip.fillna(False).astype(bool)]
@@ -159,7 +185,10 @@ def highrate(event: dict, settings: dict) -> dict:
                                        marker={"color": "#d92d20", "size": 7, "symbol": "x"}), row=r, col=1)
         fig.update_yaxes(title_text="rad", row=r, col=1)
         r += 1
-    return _layout(fig, 230 * rows + 80, start, end, t0, t1, rows)
+    out = _layout(fig, 230 * rows + 80, start, end, t0, t1, rows)
+    if view:
+        out["layout"]["xaxis"]["range"] = [view[0], view[1]]
+    return out
 
 
 # --------------------------------------------------------------------------- other satellites

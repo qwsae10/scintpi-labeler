@@ -212,6 +212,7 @@ async function showTab(tab) {
     if (res.missing) { Plotly.purge("plot"); showMsg(res.missing); return; }
     await Plotly.react("plot", res.figure.data, res.figure.layout,
       { responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ["lasso2d", "select2d"] });
+    bindZoomReload();
   } catch (e) {
     Plotly.purge("plot");
     showMsg(e.message);
@@ -219,6 +220,31 @@ async function showTab(tab) {
     $("#spinner").classList.add("hidden");
   }
   prefetch();
+}
+
+function bindZoomReload() {
+  // In the 20 Hz tab, a zoom reloads the visible range at full rate (the full window is an envelope).
+  const gd = $("#plot");
+  if (gd._zoomBound) return;
+  gd._zoomBound = true;
+  gd.on("plotly_relayout", (ev) => {
+    if (S.tab !== "highrate" || !S.event) return;
+    const k0 = Object.keys(ev).find((k) => /^xaxis\d*\.range\[0\]$/.test(k));
+    const a = k0 ? ev[k0] : undefined, b = k0 ? ev[k0.replace("[0]", "[1]")] : undefined;
+    const auto = Object.keys(ev).some((k) => /^xaxis\d*\.autorange$/.test(k));
+    clearTimeout(bindZoomReload.h);
+    if (a === undefined && !auto) return;
+    bindZoomReload.h = setTimeout(async () => {
+      const p = new URLSearchParams();
+      if ($("#pad").value) p.set("pad_minutes", $("#pad").value);
+      if (a !== undefined) { p.set("t0", String(a).replace(" ", "T")); p.set("t1", String(b).replace(" ", "T")); }
+      $("#spinner").classList.remove("hidden");
+      try {
+        const res = await api(`/api/event/${encodeURIComponent(S.event.event_id)}/tab/highrate?${p}`);
+        if (res.figure && S.tab === "highrate") await Plotly.react("plot", res.figure.data, res.figure.layout);
+      } catch (e) { toast(e.message, true); } finally { $("#spinner").classList.add("hidden"); }
+    }, 450);
+  });
 }
 
 function prefetch() {

@@ -310,7 +310,9 @@ def process_day(receiver: str, rx_type: str, date: str, files: pd.DataFrame, cfg
 
         minute.to_parquet(out / "minute.parquet", index=False)
         second.to_parquet(out / "second.parquet", index=False)
-        highrate.to_parquet(out / "highrate.parquet", index=False)
+        # Sorted by satellite and time in row groups of 200k rows, so the app can read one
+        # satellite and window without loading the day.
+        highrate.to_parquet(out / "highrate.parquet", index=False, row_group_size=200_000)
         meta = {
             "receiver": receiver, "rx_type": rx_type, "date": date,
             "sampling_rate_hz": sorted(fs_seen), "files": [os.path.basename(p) for p in used],

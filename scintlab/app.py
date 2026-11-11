@@ -141,6 +141,9 @@ def create_app() -> Flask:
         for key in ("pad_minutes", "skyplot_hours"):
             if request.args.get(key):
                 settings[key] = float(request.args[key])
+        for key in ("t0", "t1"):
+            if request.args.get(key):
+                settings[key] = request.args[key]
         try:
             fig = figures.TABS[tab](event_dict(event_id), settings)
         except figures.Missing as e:
