@@ -97,7 +97,20 @@ def _blocks(files: pd.DataFrame, hours: float) -> list[list[str]]:
     return out
 
 
-def _scintkit_block(paths: list[str], work: Path, cfg: dict):
+def _fill_geometry(df: pd.DataFrame, lat: float, lon: float) -> pd.DataFrame:
+    """Elevation and azimuth from SP3 orbits when the file has none (ScintPi 4 without SatVisibility1)."""
+    from scintkit.formatting import satellite
+    from scintlab.orbits import elev_azim
+
+    key = df["cons"].astype(np.int64) * 1000 + df["svid"].astype(np.int64)
+    prn_of = {k: satellite(int(k // 1000), int(k % 1000))[1] for k in np.unique(key)}
+    elev, azim = elev_azim(df["datetime"], key.map(prn_of), lat, lon)
+    df["elev"], df["azim"] = elev, azim
+    logger.info("geometry from SP3 orbits: %.0f%% of rows have elevation", 100 * np.isfinite(elev).mean())
+    return df
+
+
+def _scintkit_block(paths: list[str], work: Path, cfg: dict, lat: float = np.nan, lon: float = np.nan):
     from scintkit.products import compute_products
     from scintkit.reading import read_lvl0, to_lvl0
 
@@ -114,6 +127,8 @@ def _scintkit_block(paths: list[str], work: Path, cfg: dict):
         return None
     df = pd.concat(frames, ignore_index=True)
     del frames
+    if ("elev" not in df or df["elev"].isna().all()) and np.isfinite(lat):
+        df = _fill_geometry(df, lat, lon)
     frame, minute, fs = compute_products(df)
     return frame, minute, fs
 
@@ -238,11 +253,13 @@ def process_day(receiver: str, rx_type: str, date: str, files: pd.DataFrame, cfg
     day0 = pd.Timestamp(date)
     day1 = day0 + pd.Timedelta(days=1)
     hours = float(cfg["processing"]["block_hours"][rx_type])
+    lat = float(files["latitude"].median()) if "latitude" in files else np.nan
+    lon = float(files["longitude"].median()) if "longitude" in files else np.nan
     minutes, seconds, hr_parts, fs_seen, used = [], [], [], set(), []
     try:
         for i, block in enumerate(_blocks(files, hours)):
             t0 = time.time()
-            res = _sc2_block(block) if rx_type == "sc2" else _scintkit_block(block, work, cfg)
+            res = _sc2_block(block) if rx_type == "sc2" else _scintkit_block(block, work, cfg, lat, lon)
             if res is None:
                 continue
             frame, minute, fs = res
