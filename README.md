@@ -41,7 +41,7 @@ and the queue resumes where you left off.
 ## Offline snapshot (no ganymede account needed)
 
 Download the [50-event demo ZIP](https://github.com/qwsae10/scintpi-labeler/releases/download/offline-demo-2026-11-11/scintpi-demo-50.zip)
-from the private repository, or have a collaborator send you the ZIP. Extract
+from the public GitHub release. Extract
 it, open its folder and run `bash run_mac_linux.sh` on macOS/Linux or
 double-click `run_windows.bat` on Windows. You need Python 3.10+ and an
 internet connection for the first launch. After setup it works offline.

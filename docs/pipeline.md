@@ -162,10 +162,8 @@ folder (for example a local copy for development).
    group admin to add them.
 2. `labels/` and `labels/settings/` are setgid and group-writable (`2775`),
    so their label file is created on first save.
-3. The GitHub repository is private. Add them as a collaborator (read
-   access) so they can read the docs.
-4. Send them `docs/connecting.md` and `docs/labeling_guide.md`.
-5. To make someone a reviewer, add their NetID to `labels.reviewers` in
+3. Send them `docs/connecting.md` and `docs/labeling_guide.md`.
+4. To make someone a reviewer, add their NetID to `labels.reviewers` in
    `/titan/frodrigues/scint_labeler/config.yaml`.
 
 ## Offline snapshots
