@@ -73,7 +73,7 @@ def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
         uirevision="keep",
     )
     for a in fig.layout.annotations:
-        if a.text and not a.text.startswith("<"):
+        if a.xanchor == "center" and a.yanchor == "bottom":  # subplot titles from make_subplots
             a.font = {"size": 12, "color": "#344054"}
             a.x, a.xanchor = 0, "left"
     return fig.to_plotly_json()
@@ -269,13 +269,14 @@ def sidereal(event: dict, settings: dict) -> dict:
         if "s4_1" in om:
             _line(fig, om["datetime"] - dt, om["s4_1"], label, 2, color, mode="lines+markers", gl=False, show=False)
         _line(fig, o["datetime"] - dt, o["elev"], label, 3, color, show=False)
-    fig.add_annotation(text="<br>".join(notes), xref="paper", yref="paper", x=1, y=1.07, xanchor="right",
-                       showarrow=False, align="right", font={"size": 11, "color": "#475467"})
+    fig.add_annotation(text="<br>".join(notes), xref="paper", yref="paper", x=1, y=1.0, yshift=24,
+                       xanchor="right", yanchor="bottom", showarrow=False, align="right",
+                       font={"size": 11, "color": "#475467"})
     fig.update_yaxes(title_text="dB-Hz", row=1, col=1)
     fig.update_yaxes(title_text="S4", rangemode="tozero", row=2, col=1)
     fig.update_yaxes(title_text="Elev (°)", row=3, col=1)
-    out = _layout(fig, 820, start, end, t0, t1, 3)
-    out["layout"]["margin"]["t"] = 80
+    out = _layout(fig, 840, start, end, t0, t1, 3)
+    out["layout"]["margin"]["t"] = 110
     return out
 
 
