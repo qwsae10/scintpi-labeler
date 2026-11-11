@@ -8,7 +8,7 @@ Built on ganymede with ``scintlab snapshot``. The output folder (and zip) holds:
   same layout as the project folder;
 - ``events/events.parquet`` with just these events;
 - a copy of the ``scintlab`` package and launchers (``run_mac_linux.sh``,
-  ``run_windows.bat``) that make a virtual environment, install five
+  ``run_windows.bat``) that make a virtual environment, install the required
   packages and open the app.
 
 Labels made offline are saved in the snapshot's ``labels/<user>.jsonl``. Event
@@ -26,6 +26,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 
 from scintlab import config, data
 from scintlab.events import load_events
@@ -43,13 +45,14 @@ PY=$(command -v python3 || command -v python)
 if [ ! -d .venv ]; then
   echo "First run: creating a Python environment (one minute)..."
   "$PY" -m venv .venv
-  .venv/bin/python -m pip install -q --upgrade pip
-  .venv/bin/python -m pip install -q numpy "pandas>=2.0" pyarrow pyyaml "flask>=3.0" "plotly>=5.20,<6"
+fi
+if [ ! -f .venv/scintlab-ready ]; then
+  .venv/bin/python -m pip install -r requirements.txt
+  touch .venv/scintlab-ready
 fi
 export SCINTLAB_DATA_ROOT="$PWD" PYTHONPATH="$PWD/app"
 PORT=${1:-8765}
-( sleep 3; (open "http://localhost:$PORT" || xdg-open "http://localhost:$PORT") >/dev/null 2>&1 ) &
-exec .venv/bin/python -m scintlab.cli serve --port "$PORT"
+exec .venv/bin/python -m scintlab.cli serve --port "$PORT" --open-browser
 """
 
 RUN_BAT = r"""@echo off
@@ -57,14 +60,15 @@ rem Start the ScintPi labeler on this snapshot. Needs Python 3.10 or newer (pyth
 cd /d "%~dp0"
 if not exist .venv (
   echo First run: creating a Python environment, one minute...
-  python -m venv .venv
-  .venv\Scripts\python -m pip install -q --upgrade pip
-  .venv\Scripts\python -m pip install -q numpy "pandas>=2.0" pyarrow pyyaml "flask>=3.0" "plotly>=5.20,<6"
+  python -m venv .venv || exit /b 1
+)
+if not exist .venv\scintlab-ready (
+  .venv\Scripts\python -m pip install -r requirements.txt || exit /b 1
+  type nul > .venv\scintlab-ready
 )
 set SCINTLAB_DATA_ROOT=%CD%
 set PYTHONPATH=%CD%\app
-start "" http://localhost:8765
-.venv\Scripts\python -m scintlab.cli serve --port 8765
+.venv\Scripts\python -m scintlab.cli serve --port 8765 --open-browser
 """
 
 README = """ScintPi labeler - offline snapshot of {n} events ({made})
@@ -80,17 +84,50 @@ labels/<your user name>.jsonl. When you are done, send that file back.
 """
 
 
-def _naive(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["datetime"] = df["datetime"].dt.tz_convert("UTC").dt.tz_localize(None)
-    return df
+def _product_windows(events):
+    """Group half-open UTC windows by source file so overlap never duplicates a row."""
+    windows = defaultdict(list)
+
+    def add(rx, kind, start, stop, prn=None):
+        for day in pd.date_range(start.floor("D"), stop.ceil("D"), freq="D", inclusive="left"):
+            windows[rx, day.strftime("%Y-%m-%d"), kind].append((start, stop, prn))
+
+    for e in events.itertuples():
+        t0, t1 = e.start_utc - PAD, e.end_utc + PAD
+        add(e.receiver, "second", t0, t1)
+        add(e.receiver, "highrate", t0, t1, e.prn)
+        add(e.receiver, "minute", t0.floor("min"), t1)
+        day = pd.Timestamp(e.date, tz="UTC")
+        add(e.receiver, "minute", day, day + pd.Timedelta(days=1))
+        for direction in (-1, 1):
+            shift = pd.Timedelta(seconds=direction * data.SIDEREAL_S)
+            lo, hi = t0 + shift - SEARCH, t1 + shift + SEARCH
+            add(e.receiver, "second", lo, hi, e.prn)
+            add(e.receiver, "minute", lo.floor("min"), hi, e.prn)
+    return windows
 
 
-def _split_by_day(df: pd.DataFrame):
-    if df.empty:
-        return
-    for day, g in df.groupby(df["datetime"].dt.floor("D")):
-        yield day.strftime("%Y-%m-%d"), g
+def _copy_windows(src, dest, windows):
+    query = None
+    for start, stop, prn in dict.fromkeys(windows):
+        stamp = ds.field("datetime")
+        within = (stamp >= start.tz_convert(None)) & (stamp < stop.tz_convert(None))
+        if prn is not None:
+            within = within & (ds.field("prn") == prn)
+        query = within if query is None else query | within
+
+    source = ds.dataset(src, format="parquet")
+    scanner = source.scanner(filter=query, batch_size=65536, use_threads=False,
+                             batch_readahead=0, fragment_readahead=0)
+    rows = 0
+    with pq.ParquetWriter(dest, source.schema) as writer:
+        for batch in scanner.to_batches():
+            if batch.num_rows:
+                writer.write_batch(batch)
+                rows += batch.num_rows
+    if not rows:
+        dest.unlink()
+    return rows
 
 
 def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, receivers=None,
@@ -99,54 +136,31 @@ def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, rec
     if out.exists() and any(out.iterdir()):
         raise FileExistsError(f"{out} exists and is not empty")
     out.mkdir(parents=True, exist_ok=True)
+    if n < 1:
+        raise ValueError("Snapshot size must be positive")
     ev = load_events()
     ev = ev[ev["max_elev"] >= elev_mask]
     if receivers:
         ev = ev[ev["receiver"].isin(receivers)]
     ev = ev.sort_values(order if order in ev else "queue_rank").head(n)
-    parts: dict[tuple, list] = defaultdict(list)
-    last_day = None
-
-    def add(rx, kind, df):
-        if df is None or df.empty:
-            return
-        for day, g in _split_by_day(_naive(df)):
-            parts[(rx, day, kind)].append(g)
-
-    day_minutes_done = set()
-    # Day by day, so only a few day files are in memory at once (login nodes allow 8 GB).
-    for e in ev.sort_values(["receiver", "date", "start_utc"]).itertuples():
-        rx, prn = e.receiver, e.prn
-        if (rx, e.date) != last_day:
-            data.clear_cache()
-            last_day = (rx, e.date)
-        t0, t1 = e.start_utc - PAD, e.end_utc + PAD
-        add(rx, "second", data.window(rx, "second", t0, t1))
-        add(rx, "minute", data.window(rx, "minute", t0.floor("min"), t1))
-        add(rx, "highrate", data.window(rx, "highrate", t0, t1, prn))
-        for days in (-1, 1):
-            shift = pd.Timedelta(seconds=days * data.SIDEREAL_S)
-            lo, hi = t0 + shift - SEARCH, t1 + shift + SEARCH
-            add(rx, "second", data.window(rx, "second", lo, hi, prn))
-            add(rx, "minute", data.window(rx, "minute", lo.floor("min"), hi, prn))
-        if (rx, e.date) not in day_minutes_done:
-            m = data.day_minutes(rx, e.date)
-            if m is not None:
-                add(rx, "minute", m)
-            day_minutes_done.add((rx, e.date))
+    if ev.empty:
+        raise ValueError("No events match the snapshot selection")
 
     written = defaultdict(int)
-    for (rx, day, kind), frames in sorted(parts.items()):
-        df = pd.concat(frames, ignore_index=True).drop_duplicates(["prn", "datetime"])
-        df = df.sort_values(["prn", "datetime"]).reset_index(drop=True)
-        d = out / "products" / rx / day.replace("-", "")
-        d.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(d / f"{kind}.parquet", index=False, row_group_size=200_000)
-        src = data.day_dir(rx, day) / "meta.json"
-        meta = json.loads(src.read_text()) if src.exists() else {"receiver": rx, "date": day}
-        meta["snapshot"] = True
-        (d / "meta.json").write_text(json.dumps(meta, indent=2, default=str))
-        written[kind] += len(df)
+    for (rx, day, kind), windows in sorted(_product_windows(ev).items()):
+        src_dir = data.day_dir(rx, day)
+        src = src_dir / f"{kind}.parquet"
+        if not src.is_file():
+            continue
+        dest = out / "products" / rx / day.replace("-", "")
+        dest.mkdir(parents=True, exist_ok=True)
+        rows = _copy_windows(src, dest / src.name, windows)
+        if rows:
+            written[kind] += rows
+            meta_path = src_dir / "meta.json"
+            meta = json.loads(meta_path.read_text()) if meta_path.exists() else {"receiver": rx, "date": day}
+            meta["snapshot"] = True
+            (dest / "meta.json").write_text(json.dumps(meta, indent=2, default=str))
 
     root = config.data_root()
     (out / "events").mkdir(exist_ok=True)
@@ -158,10 +172,11 @@ def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, rec
     (out / "config.yaml").write_text("labels:\n  reviewers: []\n")
 
     pkg = Path(__file__).resolve().parent
-    shutil.copytree(pkg, out / "app" / "scintlab", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(pkg, out / "app" / "scintlab", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
     docs = pkg.parent / "docs" / "labeling_guide.md"
     if docs.exists():
         shutil.copy2(docs, out / "LABELING_GUIDE.md")
+    (out / "requirements.txt").write_text("numpy\npandas>=2,<3\npyarrow\npyyaml\nflask>=3\nplotly>=5.20,<6\n")
     (out / "run_mac_linux.sh").write_text(RUN_SH)
     (out / "run_mac_linux.sh").chmod(0o755)
     (out / "run_windows.bat").write_text(RUN_BAT.replace("\n", "\r\n"))
@@ -174,11 +189,7 @@ def make_snapshot(out_dir: str | Path, n: int = 50, elev_mask: float = 10.0, rec
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
             for p in sorted(out.rglob("*")):
                 if p.is_file():
-                    info = zipfile.ZipInfo.from_file(p, Path(out.name) / p.relative_to(out))
-                    if p.name.endswith(".sh"):
-                        info.external_attr = 0o755 << 16
-                    with open(p, "rb") as f:
-                        zf.writestr(info, f.read(), zipfile.ZIP_DEFLATED)
+                    zf.write(p, Path(out.name) / p.relative_to(out))
         result["zip"] = str(zpath)
         result["zip_mb"] = round(zpath.stat().st_size / 1e6, 1)
     return result

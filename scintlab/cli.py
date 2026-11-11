@@ -104,9 +104,17 @@ def cmd_serve(args):
     host = args.host or cfg["server"]["host"]
     port = args.port or cfg["server"]["port"]
     print(f"\n  scintlab is running for user {config.current_user()}.\n"
-          f"  Open http://localhost:{port} in your browser (through your SSH tunnel).\n"
+          f"  Open http://localhost:{port} in your browser.\n"
           f"  Stop with Ctrl-C. Every label is already saved.\n")
-    app.run(host=host, port=port, debug=False, threaded=True)
+    if args.open_browser:
+        import webbrowser
+        from werkzeug.serving import make_server
+
+        with make_server(host, port, app, threaded=True) as server:
+            webbrowser.open(f"http://localhost:{server.server_port}")
+            server.serve_forever()
+    else:
+        app.run(host=host, port=port, debug=False, threaded=True)
 
 
 def cmd_snapshot(args):
@@ -155,6 +163,7 @@ def main(argv=None):
     s = sub.add_parser("serve", help="start the labeling app")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
+    s.add_argument("--open-browser", action="store_true", help="open the local browser once the server is listening")
     s.set_defaults(func=cmd_serve)
     s = sub.add_parser("snapshot", help="write N events and the app to a folder + zip for offline use")
     s.add_argument("--n", type=int, default=50)

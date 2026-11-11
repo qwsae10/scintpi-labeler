@@ -40,9 +40,15 @@ and the queue resumes where you left off.
 
 ## Offline snapshot (no ganymede account needed)
 
-On ganymede, `scintlab snapshot --n 50` writes 50 events, a copy of the app
+Download the [50-event demo ZIP](https://github.com/qwsae10/scintpi-labeler/releases/download/offline-demo-2026-11-11/scintpi-demo-50.zip)
+from the private repository, or have a collaborator send you the ZIP. Extract
+it, open its folder and run `bash run_mac_linux.sh` on macOS/Linux or
+double-click `run_windows.bat` on Windows. You need Python 3.10+ and an
+internet connection for the first launch. After setup it works offline.
+
+To build a fresh demo on Ganymede, `scintlab snapshot --n 50` writes 50 events, a copy of the app
 and launchers to `/titan/frodrigues/scint_labeler/snapshots/<name>.zip`
-(about 100–150 MB). Copy the zip to any laptop with Python 3.10+, unzip it and
+(size depends on the selected events). Copy the zip to any laptop with Python 3.10+, unzip it and
 run `bash run_mac_linux.sh` (or double-click `run_windows.bat` on Windows).
 Labels are saved in the snapshot's `labels/<user>.jsonl` with the same event
 ids as on ganymede, so that file can be copied into the shared `labels/`

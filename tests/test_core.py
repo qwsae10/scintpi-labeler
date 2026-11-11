@@ -196,3 +196,35 @@ def test_snapshot_builds_self_contained_folder(root, tmp_path):
     s = pd.read_parquet(out / "products" / "TE-HO3" / "20241010" / "second.parquet")
     assert s["datetime"].dt.tz is None and len(s) > 0
     assert (tmp_path / "snap.zip").exists()
+
+
+def test_snapshot_overlapping_windows_across_midnight(root):
+    from scintlab.snapshot import make_snapshot
+
+    start = pd.Timestamp("2024-10-11 00:01", tz="UTC")
+    events = pd.DataFrame([
+        dict(event_id=str(i), receiver="RX", date="2024-10-11", prn="G01",
+             start_utc=start + pd.Timedelta(minutes=i), end_utc=start + pd.Timedelta(minutes=i+1),
+             max_elev=40, strat_rank=i) for i in range(2)
+    ])
+    (root / "events").mkdir()
+    events.to_parquet(config.events_path(), index=False)
+    before = pd.Timestamp("2024-10-10 23:59")
+    for day, times in [("20241010", [before - pd.Timedelta(hours=1), before]),
+                       ("20241011", [start.tz_convert(None)])]:
+        folder = root / "products" / "RX" / day
+        folder.mkdir(parents=True)
+        frame = pd.DataFrame([(t, p) for t in times for p in ["G01", "G02"]], columns=["datetime", "prn"])
+        for kind in ("minute", "second", "highrate"):
+            frame.to_parquet(folder / f"{kind}.parquet", index=False)
+
+    out = root / "demo"
+    result = make_snapshot(out)
+    assert result["rows"] == {"minute": 4, "second": 4, "highrate": 2}
+    assert pd.read_parquet(out / "events/events.parquet")["event_id"].tolist() == ["0", "1"]
+    prev = out / "products/RX/20241010"
+    assert pd.read_parquet(prev / "second.parquet")["datetime"].tolist() == [before, before]
+    assert pd.read_parquet(prev / "highrate.parquet")["prn"].tolist() == ["G01"]
+    with zipfile.ZipFile(result["zip"]) as archive:
+        assert archive.testzip() is None
+        assert "demo/run_windows.bat" in archive.namelist()
