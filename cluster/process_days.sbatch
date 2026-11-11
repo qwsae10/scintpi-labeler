@@ -9,7 +9,8 @@
 set -euo pipefail
 cd /titan/frodrigues/scint_labeler
 N_TASKS="${1:?number of days}"
-source /etc/profile.d/lmod.sh && module load rxtools/25.0.0   # bin2asc for ScintPi 4 (Apptainer)
+set +u; source /etc/profile.d/lmod.sh; module load rxtools/25.0.0; set -u   # bin2asc for ScintPi 4 (Apptainer)
+which apptainer
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1} OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 echo "host $(hostname) task $SLURM_ARRAY_TASK_ID code $(git -C code rev-parse --short HEAD)"
 env/bin/scintlab process --task-id "$SLURM_ARRAY_TASK_ID" --n-tasks "$N_TASKS"
