@@ -1,278 +1,400 @@
-const state = {
-  events: [],
-  index: 0,
-  summary: null,
-  loading: false,
+"use strict";
+
+const S = {
+  boot: null, settings: null, queue: [], index: 0, event: null, tab: null,
+  confidence: "High", segments: [], figCache: new Map(), openedAt: Date.now(), busy: false,
 };
+const $ = (q) => document.querySelector(q);
+const $$ = (q) => Array.from(document.querySelectorAll(q));
+const FILTERS = ["status", "receiver", "date", "constellation", "rx_type", "prn", "min_s4", "elev_mask", "order"];
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  const p = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw new Error(p.error || `HTTP ${r.status}`);
+  return p;
+}
+const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-async function requestJSON(url, options = {}) {
-  const response = await fetch(url, options);
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
-  return payload;
+function toast(msg, err = false) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("error", err);
+  t.classList.add("show");
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => t.classList.remove("show"), err ? 6000 : 2200);
 }
 
-function showToast(message, error = false) {
-  const toast = $("#toast");
-  toast.textContent = message;
-  toast.classList.toggle("error", error);
-  toast.classList.add("visible");
-  window.clearTimeout(showToast.timeout);
-  showToast.timeout = window.setTimeout(() => toast.classList.remove("visible"), 3200);
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+const num = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "–" : Number(v).toFixed(d));
+
+/* ------------------------------------------------------------------ setup */
+
+function fill(sel, values) {
+  const s = $(sel);
+  values.forEach((v) => s.add(new Option(v, v)));
+}
+
+function buildLabelButtons() {
+  const box = $("#label-buttons");
+  box.innerHTML = "";
+  S.boot.classes.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `label-btn c${i}`;
+    b.dataset.label = c;
+    b.innerHTML = `<kbd>${i + 1}</kbd> ${c}`;
+    b.addEventListener("click", () => decide(c));
+    box.appendChild(b);
+  });
+  const seg = $("#seg-class");
+  S.boot.classes.forEach((c) => seg.add(new Option(c, c)));
+  if (S.boot.is_reviewer) {
+    $("#f-status").add(new Option("Review queue (flagged by labelers)", "review_queue"));
+  }
+  S.boot.classes.forEach((c) => $("#f-status").add(new Option(`My ${c} labels`, c)));
+}
+
+function buildTabs() {
+  const nav = $("#tabs");
+  nav.innerHTML = "";
+  const tabs = Object.keys(S.boot.tab_titles).filter((t) => S.settings.tabs[t]);
+  tabs.forEach((t, i) => {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.dataset.tab = t;
+    b.innerHTML = `${S.boot.tab_titles[t]} <span class="muted small">⇧${i + 1}</span>`;
+    b.addEventListener("click", () => showTab(t));
+    nav.appendChild(b);
+  });
+  if (!tabs.includes(S.tab)) S.tab = tabs.includes(S.settings.default_tab) ? S.settings.default_tab : tabs[0];
+  markTab();
+}
+
+function markTab() {
+  $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === S.tab));
+  $("#sky-hours-wrap").classList.toggle("hidden", S.tab !== "skyplot");
+  $("#pad").closest("label").classList.toggle("hidden", ["skyplot", "indices", "network"].includes(S.tab));
+}
+
+/* ------------------------------------------------------------------ queue */
+
+function query() {
+  const p = new URLSearchParams();
+  FILTERS.forEach((f) => {
+    const v = $(`#f-${f}`).value.trim();
+    if (v) p.set(f, v);
+  });
+  return p;
 }
 
 async function loadSummary() {
-  state.summary = await requestJSON("/api/summary");
-  const { total, labeled, unlabeled, stations, dates } = state.summary;
-  const percent = total ? Math.round((labeled / total) * 100) : 0;
-  $("#progress-percent").textContent = `${percent}%`;
-  $("#progress-fill").style.width = `${percent}%`;
-  $("#labeled-count").textContent = labeled.toLocaleString();
-  $("#remaining-count").textContent = unlabeled.toLocaleString();
-  fillSelect("#station-filter", stations);
-  fillSelect("#date-filter", dates);
+  const p = new URLSearchParams();
+  if ($("#f-elev_mask").value) p.set("elev_mask", $("#f-elev_mask").value);
+  const s = await api(`/api/summary?${p}`);
+  const done = s.labeled + s.skipped;
+  const pct = s.total ? Math.round((100 * s.labeled) / s.total) : 0;
+  $("#progress-percent").textContent = `${pct}%`;
+  $("#progress-fill").style.width = `${pct}%`;
+  $("#progress-text").textContent = `${s.labeled.toLocaleString()} labeled · ${s.skipped} skipped · ${(s.total - done).toLocaleString()} left`;
+  $("#class-counts").innerHTML = S.boot.classes.map((c, i) => `<span class="dot c${i}"></span>${c} ${s.by_class[c] || 0}`).join(" · ")
+    + (S.boot.is_reviewer ? ` · <b>${s.review_queue}</b> awaiting review` : "");
 }
 
-function fillSelect(selector, values) {
-  const select = $(selector);
-  const current = select.value;
-  const existing = new Set(Array.from(select.options).map((option) => option.value));
-  values.forEach((value) => {
-    if (!existing.has(value)) select.add(new Option(value, value));
+async function loadQueue(keepId = null) {
+  const p = await api(`/api/queue?${query()}`);
+  S.queue = p.events;
+  $("#queue-count").textContent = p.count.toLocaleString();
+  const list = $("#queue-list");
+  list.innerHTML = "";
+  S.queue.slice(0, 300).forEach((e, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<b>${e.receiver}</b> ${e.prn} <span class="muted">${e.start_utc.slice(0, 16).replace("T", " ")}</span> <span class="s4">${num(e.peak_s4)}</span>`;
+    li.addEventListener("click", () => { S.index = i; loadEvent(); });
+    list.appendChild(li);
   });
-  select.value = current;
-}
-
-function filterQuery() {
-  const params = new URLSearchParams();
-  const fields = {
-    status: $("#status-filter").value,
-    station: $("#station-filter").value,
-    date: $("#date-filter").value,
-    prn: $("#prn-filter").value.trim(),
-    min_s4: $("#min-s4-filter").value,
-    max_s4: $("#max-s4-filter").value,
-  };
-  Object.entries(fields).forEach(([key, value]) => {
-    if (value) params.set(key, value);
-  });
-  return params.toString();
-}
-
-async function loadQueue({ preserveEventId = null } = {}) {
-  const payload = await requestJSON(`/api/events?${filterQuery()}`);
-  state.events = payload.events;
-  $("#queue-count").textContent = payload.count.toLocaleString();
-  if (!state.events.length) {
-    showEmptyState();
+  if (!S.queue.length) {
+    S.event = null;
+    $("#ev-title").textContent = "No events match";
+    $("#ev-time").textContent = "";
+    $("#ev-facts").innerHTML = "";
+    $("#ev-pos").textContent = "";
+    Plotly.purge("plot");
+    showMsg($("#f-status").value === "unlabeled" ? "Nothing left to label with these filters. Well done!" : "No events match these filters.");
     return;
   }
-  const preserved = preserveEventId
-    ? state.events.findIndex((event) => event.event_id === preserveEventId)
-    : -1;
-  state.index = preserved >= 0 ? preserved : Math.min(state.index, state.events.length - 1);
-  await loadCurrentEvent();
+  const k = keepId ? S.queue.findIndex((e) => e.event_id === keepId) : -1;
+  S.index = k >= 0 ? k : Math.min(S.index, S.queue.length - 1);
+  await loadEvent();
 }
 
-function showEmptyState() {
-  $("#empty-state").classList.remove("hidden");
-  $(".plot-card").classList.add("hidden");
-  $(".review-card").classList.add("hidden");
-  $("#event-title").textContent = "No events";
-  $("#event-time").textContent = "";
-  $("#queue-position").textContent = "";
-  $("#event-values").classList.add("hidden");
+function highlightQueue() {
+  $$("#queue-list li").forEach((li, i) => li.classList.toggle("current", i === S.index));
+  const cur = $$("#queue-list li")[S.index];
+  if (cur) cur.scrollIntoView({ block: "nearest" });
 }
 
-function showWorkspace() {
-  $("#empty-state").classList.add("hidden");
-  $(".plot-card").classList.remove("hidden");
-  $(".review-card").classList.remove("hidden");
-  $("#event-values").classList.remove("hidden");
+/* ------------------------------------------------------------------ event */
+
+async function loadEvent() {
+  const q = S.queue[S.index];
+  if (!q) return;
+  S.figCache.clear();
+  const ev = await api(`/api/event/${encodeURIComponent(q.event_id)}`);
+  S.event = ev;
+  S.openedAt = Date.now();
+  $("#ev-title").textContent = `${ev.receiver} · ${ev.prn}`;
+  $("#ev-time").textContent = `${fmtTime(ev.start_utc)} – ${ev.end_utc.slice(11, 16)} · ${ev.n_minutes} min · local ${num(ev.local_hour, 1)} h`;
+  $("#ev-facts").innerHTML = [
+    ["Peak S4", num(ev.peak_s4)], ["Other freq", num(ev.peak_s4_other)],
+    ["Elevation", `${Math.round(ev.min_elev)}–${Math.round(ev.max_elev)}°`], ["Azimuth", `${Math.round(ev.mean_azim)}°`],
+    ["Type", ev.rx_type.toUpperCase()], ["Day", ev.day_reason || "–"],
+  ].map(([k, v]) => `<span><em>${k}</em>${v}</span>`).join("");
+  $("#ev-pos").textContent = `${S.index + 1} / ${S.queue.length}`;
+  $("#prev").disabled = S.index === 0;
+  $("#next").disabled = S.index >= S.queue.length - 1;
+  const d = ev.decision || {};
+  S.segments = d.segments ? [...d.segments] : [];
+  setConfidence(d.confidence || "High");
+  $("#for-review").checked = !!d.for_review;
+  $("#notes").value = d.notes || "";
+  $$(".label-btn").forEach((b) => b.classList.toggle("active", d.action === "label" && b.dataset.label === d.label));
+  $("#saved-line").textContent = d.time_utc
+    ? (d.action === "skip" ? `Skipped ${d.time_utc.slice(0, 16)}` : `Saved as ${d.label} (${d.confidence}) ${d.time_utc.slice(0, 16)} UTC`)
+    : "";
+  renderSegments();
+  renderReviewer(ev);
+  highlightQueue();
+  await showTab(S.tab);
 }
 
-async function loadCurrentEvent() {
-  if (!state.events.length || state.loading) return;
-  state.loading = true;
-  showWorkspace();
-  $("#plot-loading").classList.remove("hidden");
-  setControlsDisabled(true);
-  const queued = state.events[state.index];
-  updateEventMetadata(queued);
-  try {
-    const payload = await requestJSON(`/api/events/${encodeURIComponent(queued.event_id)}`);
-    state.events[state.index] = payload.event;
-    updateEventMetadata(payload.event);
-    await Plotly.react("event-plot", payload.figure.data, payload.figure.layout, {
-      responsive: true,
-      displaylogo: false,
-      scrollZoom: true,
-      modeBarButtonsToRemove: ["lasso2d", "select2d"],
-    });
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    $("#plot-loading").classList.add("hidden");
-    setControlsDisabled(false);
-    state.loading = false;
-  }
-}
-
-function updateEventMetadata(event) {
-  const start = new Date(event.start_utc);
-  const end = new Date(event.end_utc);
-  $("#queue-position").textContent = `${state.index + 1} of ${state.events.length}`;
-  $("#event-title").textContent = `${event.station} ${event.prn}`;
-  $("#event-time").textContent = `${formatUTC(start)} to ${formatUTC(end)}`;
-  $("#peak-s4-l1").textContent = formatS4(event.peak_s4);
-  $("#peak-s4-l2").textContent = formatS4(event.peak_s4_2);
-  $("#event-elevation").textContent = formatElevation(
-    event.min_elevation_deg,
-    event.max_elevation_deg,
-  );
-  $("#previous-button").disabled = state.index === 0;
-  $("#next-button").disabled = state.index >= state.events.length - 1;
-  $("#notes").value = event.notes || "";
-  const confidence = event.confidence || "Medium";
-  const radio = document.querySelector(`input[name="confidence"][value="${confidence}"]`);
-  if (radio) radio.checked = true;
-  $$(".label-button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.label === event.label);
-  });
-}
-
-function formatS4(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(3) : "n/a";
-}
-
-function formatElevation(minimum, maximum) {
-  const low = Number(minimum);
-  const high = Number(maximum);
-  if (!Number.isFinite(low) || !Number.isFinite(high)) return "n/a";
-  const roundedLow = Math.round(low);
-  const roundedHigh = Math.round(high);
-  return roundedLow === roundedHigh ? `${roundedLow}°` : `${roundedLow} to ${roundedHigh}°`;
-}
-
-function setQueueOpen(open) {
-  $("#queue-drawer").classList.toggle("closed", !open);
-  $("#queue-drawer").setAttribute("aria-hidden", String(!open));
-  $("#drawer-backdrop").classList.toggle("hidden", !open);
-  $("#open-queue").setAttribute("aria-expanded", String(open));
-  if (open) $("#close-queue").focus();
-}
-
-function formatUTC(date) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  });
-  return `${formatter.format(date)} UTC`;
-}
-
-function setControlsDisabled(disabled) {
-  $$(".label-button, #skip-button").forEach((button) => { button.disabled = disabled; });
-}
-
-async function saveDecision({ label = null, skipped = false }) {
-  if (!state.events.length || state.loading) return;
-  const current = state.events[state.index];
-  const confidence = document.querySelector('input[name="confidence"]:checked')?.value || "Medium";
-  setControlsDisabled(true);
-  try {
-    const payload = await requestJSON(`/api/events/${encodeURIComponent(current.event_id)}/review`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        state: skipped ? "skipped" : "labeled",
-        label,
-        confidence,
-        notes: $("#notes").value,
-      }),
-    });
-    state.summary = payload.summary;
-    const decision = skipped ? "Skipped for later" : `Saved as ${label}`;
-    showToast(decision);
+function renderReviewer(ev) {
+  const panel = $("#review-panel");
+  if (!S.boot.is_reviewer || !ev.all_decisions || !ev.all_decisions.length) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  $("#others").innerHTML = ev.all_decisions.map((r) => `<div class="other"><b>${r.user}</b>: ${r.action === "skip" ? "skipped" : `${r.label} (${r.confidence})`}${r.for_review ? " · <b>for review</b>" : ""}${r.notes ? ` · “${r.notes}”` : ""}</div>`).join("")
+    + `<div class="label-row">${S.boot.classes.map((c) => `<button class="btn ghost final" data-final="${c}">Final: ${c}</button>`).join("")}</div>`;
+  $$(".final").forEach((b) => b.addEventListener("click", async () => {
+    await post(`/api/event/${encodeURIComponent(ev.event_id)}/review`, { final_label: b.dataset.final, notes: $("#notes").value });
+    toast(`Final label: ${b.dataset.final}`);
     await loadSummary();
-    const status = $("#status-filter").value;
-    if (status === "unlabeled" || status === "skipped" || status === "labeled" || ["Scintillation", "Multipath", "RFI", "Other"].includes(status)) {
-      state.index = Math.min(state.index, Math.max(0, state.events.length - 2));
-      await loadQueue();
-    } else {
-      state.events[state.index] = { ...current, ...payload.review, review_state: payload.review.state };
-      if (state.index < state.events.length - 1) state.index += 1;
-      await loadCurrentEvent();
+    if ($("#f-status").value === "review_queue") await loadQueue(); else move(1);
+  }));
+}
+
+function showMsg(text) {
+  const m = $("#plot-msg");
+  m.textContent = text || "";
+  m.classList.toggle("hidden", !text);
+}
+
+async function showTab(tab) {
+  if (!tab) return;
+  S.tab = tab;
+  markTab();
+  if (!S.event) return;
+  const p = new URLSearchParams();
+  if ($("#pad").value) p.set("pad_minutes", $("#pad").value);
+  if (tab === "skyplot" && $("#sky-hours").value) p.set("skyplot_hours", $("#sky-hours").value);
+  const key = `${S.event.event_id}|${tab}|${p}`;
+  $("#spinner").classList.remove("hidden");
+  showMsg("");
+  try {
+    let res = S.figCache.get(key);
+    if (!res) {
+      res = await api(`/api/event/${encodeURIComponent(S.event.event_id)}/tab/${tab}?${p}`);
+      S.figCache.set(key, res);
     }
-  } catch (error) {
-    showToast(error.message, true);
+    if (S.tab !== tab) return;
+    if (res.missing) { Plotly.purge("plot"); showMsg(res.missing); return; }
+    await Plotly.react("plot", res.figure.data, res.figure.layout,
+      { responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ["lasso2d", "select2d"] });
+  } catch (e) {
+    Plotly.purge("plot");
+    showMsg(e.message);
   } finally {
-    setControlsDisabled(false);
+    $("#spinner").classList.add("hidden");
+  }
+  prefetch();
+}
+
+function prefetch() {
+  // Load the next event's first tab in the background so moving on is quick.
+  const nxt = S.queue[S.index + 1];
+  if (!nxt || prefetch.last === nxt.event_id) return;
+  prefetch.last = nxt.event_id;
+  fetch(`/api/event/${encodeURIComponent(nxt.event_id)}/tab/${S.tab}`).catch(() => {});
+}
+
+/* ------------------------------------------------------------------ labeling */
+
+function setConfidence(c) {
+  S.confidence = c;
+  $$("[data-conf]").forEach((b) => b.classList.toggle("on", b.dataset.conf === c));
+}
+
+async function save(body, message) {
+  if (!S.event || S.busy) return false;
+  S.busy = true;
+  try {
+    await post(`/api/event/${encodeURIComponent(S.event.event_id)}/label`, {
+      ...body, notes: $("#notes").value, for_review: $("#for-review").checked, segments: S.segments,
+      elevation_mask_deg: Number($("#f-elev_mask").value || S.settings.elevation_mask_deg),
+      seconds_on_event: Math.round((Date.now() - S.openedAt) / 1000),
+    });
+    toast(message);
+    return true;
+  } catch (e) {
+    toast(`Not saved: ${e.message}`, true);
+    return false;
+  } finally {
+    S.busy = false;
   }
 }
 
-async function move(delta) {
-  const next = state.index + delta;
-  if (next < 0 || next >= state.events.length || state.loading) return;
-  state.index = next;
-  await loadCurrentEvent();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+async function decide(label) {
+  const id = S.event && S.event.event_id;
+  if (!(await save({ action: "label", label, confidence: S.confidence }, `Saved: ${label} (${S.confidence})`))) return;
+  await afterSave(id);
 }
 
-function bindEvents() {
-  $("#filter-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    state.index = 0;
-    await loadQueue();
-    setQueueOpen(false);
-  });
-  $("#reset-filters").addEventListener("click", async () => {
-    $("#filter-form").reset();
-    $("#status-filter").value = "unlabeled";
-    state.index = 0;
-    await loadQueue();
-  });
-  $("#open-queue").addEventListener("click", () => setQueueOpen(true));
-  $("#close-queue").addEventListener("click", () => setQueueOpen(false));
-  $("#drawer-backdrop").addEventListener("click", () => setQueueOpen(false));
-  $("#previous-button").addEventListener("click", () => move(-1));
-  $("#next-button").addEventListener("click", () => move(1));
-  $$(".label-button").forEach((button) => {
-    button.addEventListener("click", () => saveDecision({ label: button.dataset.label }));
-  });
-  $("#skip-button").addEventListener("click", () => saveDecision({ skipped: true }));
-  document.addEventListener("keydown", (event) => {
-    const tag = document.activeElement?.tagName;
-    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || event.metaKey || event.ctrlKey || event.altKey) return;
-    const labels = { "1": "Scintillation", "2": "Multipath", "3": "RFI", "4": "Other" };
-    if (labels[event.key]) {
-      event.preventDefault();
-      saveDecision({ label: labels[event.key] });
-    } else if (event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      saveDecision({ skipped: true });
-    } else if (event.key === "Escape") {
-      setQueueOpen(false);
+async function afterSave(id) {
+  await loadSummary();
+  const status = $("#f-status").value;
+  if (status === "unlabeled" || status === "skipped" || status === "review_queue") {
+    await loadQueue();  // the saved event drops out; the same index is now the next event
+  } else {
+    S.event.decision = { action: "label" };
+    if (S.index < S.queue.length - 1) { S.index += 1; await loadEvent(); } else { await loadQueue(id); }
+  }
+}
+
+async function move(d) {
+  const i = S.index + d;
+  if (i < 0 || i >= S.queue.length) return;
+  S.index = i;
+  await loadEvent();
+}
+
+/* ------------------------------------------------------------------ segments */
+
+function renderSegments() {
+  $("#seg-count").textContent = S.segments.length ? `(${S.segments.length})` : "";
+  $("#segments-box").open = S.segments.length > 0;
+  $("#seg-list").innerHTML = S.segments.map((s, i) => `<li>${s.start.slice(11, 16)}–${s.end.slice(11, 16)} UTC → <b>${s.label}</b> <button class="link" data-del="${i}">remove</button></li>`).join("");
+  $$("[data-del]").forEach((b) => b.addEventListener("click", () => { S.segments.splice(Number(b.dataset.del), 1); renderSegments(); }));
+}
+
+function addSegment() {
+  const gd = $("#plot");
+  const xr = gd.layout && gd.layout.xaxis && gd.layout.xaxis.range;
+  if (!xr || S.tab === "skyplot" || S.tab === "indices") { toast("Zoom a time plot first", true); return; }
+  const floor = (v) => { const d = new Date(String(v).replace(" ", "T") + (String(v).endsWith("Z") ? "" : "Z")); d.setUTCSeconds(0, 0); return d; };
+  const a = floor(xr[0]);
+  const b = floor(xr[1]); b.setUTCMinutes(b.getUTCMinutes() + 1);
+  const evS = new Date(S.event.start_utc), evE = new Date(S.event.end_utc);
+  const start = new Date(Math.max(a, evS)), end = new Date(Math.min(b, evE));
+  if (end <= start) { toast("The zoomed range does not overlap the shaded event", true); return; }
+  S.segments.push({ start: start.toISOString(), end: end.toISOString(), label: $("#seg-class").value });
+  renderSegments();
+  toast("Range added. It is saved when you press a label key.");
+}
+
+/* ------------------------------------------------------------------ settings */
+
+function openSettings() {
+  const st = S.settings;
+  $("#set-tabs").innerHTML = Object.entries(S.boot.tab_titles).map(([t, n]) => `<label class="check"><input type="checkbox" data-tab="${t}" ${st.tabs[t] ? "checked" : ""}/> ${n}</label>`).join("");
+  const dt = $("#set-default_tab");
+  dt.innerHTML = "";
+  Object.entries(S.boot.tab_titles).forEach(([t, n]) => dt.add(new Option(n, t)));
+  ["default_tab", "queue_order", "pad_minutes", "comparison_satellites", "elevation_mask_deg", "highrate_decimate_hz"]
+    .forEach((k) => { $(`#set-${k}`).value = st[k]; });
+  $("#settings").showModal();
+}
+
+async function saveSettings() {
+  const tabs = {};
+  $$("#set-tabs [data-tab]").forEach((c) => { tabs[c.dataset.tab] = c.checked; });
+  if (!Object.values(tabs).some(Boolean)) { toast("Keep at least one tab", true); return; }
+  const body = { tabs };
+  ["default_tab", "queue_order"].forEach((k) => { body[k] = $(`#set-${k}`).value; });
+  ["pad_minutes", "comparison_satellites", "elevation_mask_deg", "highrate_decimate_hz"].forEach((k) => { body[k] = Number($(`#set-${k}`).value); });
+  S.settings = await post("/api/settings", body);
+  $("#pad").value = S.settings.pad_minutes;
+  $("#f-elev_mask").value = S.settings.elevation_mask_deg;
+  buildTabs();
+  S.figCache.clear();
+  toast("Settings saved");
+  await loadSummary();
+  await loadQueue(S.event && S.event.event_id);
+}
+
+/* ------------------------------------------------------------------ keys */
+
+function bind() {
+  $("#filters").addEventListener("submit", async (e) => { e.preventDefault(); S.index = 0; await loadSummary(); await loadQueue(); });
+  $("#prev").addEventListener("click", () => move(-1));
+  $("#next").addEventListener("click", () => move(1));
+  $("#skip").addEventListener("click", async () => { const id = S.event.event_id; if (await save({ action: "skip" }, "Skipped")) await afterSave(id); });
+  $("#clear").addEventListener("click", async () => { if (await save({ action: "clear" }, "Label cleared")) { await loadSummary(); await loadEvent(); } });
+  $$("[data-conf]").forEach((b) => b.addEventListener("click", () => setConfidence(b.dataset.conf)));
+  $("#seg-add").addEventListener("click", addSegment);
+  $("#toggle-queue").addEventListener("click", () => document.body.classList.toggle("no-queue"));
+  $("#open-settings").addEventListener("click", openSettings);
+  $("#open-help").addEventListener("click", () => $("#help").showModal());
+  $("#settings").addEventListener("close", () => { if ($("#settings").returnValue === "save") saveSettings(); });
+  $("#pad").addEventListener("change", () => showTab(S.tab));
+  $("#sky-hours").addEventListener("change", () => showTab(S.tab));
+  document.addEventListener("keydown", (e) => {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || e.metaKey || e.ctrlKey || e.altKey) {
+      if (e.key === "Escape") document.activeElement.blur();
+      return;
     }
+    if ($("dialog[open]")) return;
+    const digit = e.code && e.code.startsWith("Digit") ? Number(e.code.slice(5)) : NaN;
+    if (e.shiftKey && digit >= 1) {
+      const t = $$(".tab")[digit - 1];
+      if (t) { e.preventDefault(); showTab(t.dataset.tab); }
+      return;
+    }
+    if (!e.shiftKey && digit >= 1 && digit <= S.boot.classes.length) { e.preventDefault(); decide(S.boot.classes[digit - 1]); return; }
+    const k = e.key.toLowerCase();
+    if (k === "h") setConfidence("High");
+    else if (k === "l") setConfidence("Low");
+    else if (k === "r") $("#for-review").checked = !$("#for-review").checked;
+    else if (k === "s") $("#skip").click();
+    else if (k === "q") document.body.classList.toggle("no-queue");
+    else if (k === "?") $("#help").showModal();
+    else if (e.key === "ArrowRight") move(1);
+    else if (e.key === "ArrowLeft") move(-1);
+    else return;
+    e.preventDefault();
   });
 }
 
-async function initialize() {
-  bindEvents();
+async function init() {
   try {
+    S.boot = await api("/api/bootstrap");
+    S.settings = S.boot.settings;
+    $("#user-name").textContent = S.boot.user + (S.boot.is_reviewer ? " (reviewer)" : "");
+    fill("#f-receiver", S.boot.receivers);
+    fill("#f-date", S.boot.dates);
+    fill("#f-constellation", S.boot.constellations);
+    $("#pad").value = S.settings.pad_minutes;
+    $("#f-elev_mask").value = S.settings.elevation_mask_deg;
+    buildLabelButtons();
+    buildTabs();
+    bind();
     await loadSummary();
     await loadQueue();
-  } catch (error) {
-    showToast(error.message, true);
-    $("#event-title").textContent = "Could not load the event index";
+  } catch (e) {
+    toast(e.message, true);
+    $("#ev-title").textContent = "Could not start: " + e.message;
   }
 }
-
-initialize();
+init();

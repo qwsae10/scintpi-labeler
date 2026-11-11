@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ScintPi labeler</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=version) }}" />
+  <script src="{{ url_for('static', filename='plotly.min.js') }}"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="queue" id="queue">
+    <div class="queue-head">
+      <h2>Queue</h2>
+      <span class="user" id="user-name"></span>
+    </div>
+
+    <section class="progress">
+      <div class="progress-line"><strong id="progress-percent">0%</strong><span id="progress-text"></span></div>
+      <div class="bar"><div id="progress-fill"></div></div>
+      <div class="class-counts" id="class-counts"></div>
+    </section>
+
+    <form id="filters" class="filters">
+      <label>Show
+        <select id="f-status">
+          <option value="unlabeled">Not yet labeled</option>
+          <option value="labeled">My labels</option>
+          <option value="skipped">Skipped</option>
+          <option value="for_review">I saved for review</option>
+          <option value="all">All events</option>
+        </select>
+      </label>
+      <div class="two">
+        <label>Receiver<select id="f-receiver"><option value="">All</option></select></label>
+        <label>Date<select id="f-date"><option value="">All</option></select></label>
+      </div>
+      <div class="two">
+        <label>Constellation<select id="f-constellation"><option value="">All</option></select></label>
+        <label>Receiver type
+          <select id="f-rx_type"><option value="">All</option><option value="sc2">ScintPi 2</option>
+            <option value="sc3">ScintPi 3</option><option value="sc4">ScintPi 4</option></select></label>
+      </div>
+      <div class="two">
+        <label>Satellite<input id="f-prn" placeholder="G12" autocomplete="off" /></label>
+        <label>Min peak S4<input id="f-min_s4" type="number" step="0.05" min="0" placeholder="0.2" /></label>
+      </div>
+      <div class="two">
+        <label>Elevation mask (°)<input id="f-elev_mask" type="number" step="1" min="0" max="80" /></label>
+        <label>Order
+          <select id="f-order"><option value="">Settings default</option><option value="random">Random</option>
+            <option value="chronological">By receiver and time</option><option value="peak_s4">Highest S4 first</option></select></label>
+      </div>
+      <button type="submit" class="btn wide">Apply</button>
+      <p class="muted"><strong id="queue-count">0</strong> events match</p>
+    </form>
+    <ol class="queue-list" id="queue-list"></ol>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <button class="btn ghost" id="toggle-queue" title="Show or hide the queue (Q)">☰</button>
+      <div class="event-title">
+        <strong id="ev-title">Loading…</strong>
+        <span id="ev-time" class="muted"></span>
+      </div>
+      <div class="facts" id="ev-facts"></div>
+      <div class="nav">
+        <span id="ev-pos" class="muted"></span>
+        <button class="btn ghost" id="prev" title="Previous (←)">←</button>
+        <button class="btn ghost" id="next" title="Next (→)">→</button>
+        <button class="btn ghost" id="open-settings" title="Settings">⚙</button>
+        <button class="btn ghost" id="open-help" title="Help (?)">?</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs"></nav>
+    <div class="tab-tools" id="tab-tools">
+      <label>Window ± <input id="pad" type="number" min="1" max="30" step="1" /> min</label>
+      <label id="sky-hours-wrap" class="hidden">Sky map span
+        <select id="sky-hours"><option value="">Whole day</option><option value="1">±1 h</option>
+          <option value="3">±3 h</option><option value="6">±6 h</option></select></label>
+      <span class="muted small">Scroll to zoom, double-click to reset. Shaded band = high-S4 minutes.</span>
+    </div>
+    <section class="plot-card">
+      <div class="plot-msg hidden" id="plot-msg"></div>
+      <div class="spinner hidden" id="spinner">Loading…</div>
+      <div id="plot"></div>
+    </section>
+
+    <section class="review-panel hidden" id="review-panel">
+      <h3>Reviewer: labels from labelers</h3>
+      <div id="others"></div>
+    </section>
+
+    <section class="label-panel" id="label-panel">
+      <div class="label-row" id="label-buttons"></div>
+      <div class="label-row options">
+        <div class="seg-toggle" role="group" aria-label="Confidence">
+          <span class="muted">Confidence</span>
+          <button type="button" class="chip" data-conf="High">High <kbd>H</kbd></button>
+          <button type="button" class="chip" data-conf="Low">Low <kbd>L</kbd></button>
+        </div>
+        <label class="check"><input type="checkbox" id="for-review" /> Save for reviewer <kbd>R</kbd></label>
+        <button type="button" class="btn ghost" id="skip">Skip for now <kbd>S</kbd></button>
+        <button type="button" class="btn ghost" id="clear">Clear my label</button>
+      </div>
+      <div class="label-row options">
+        <input id="notes" class="notes" placeholder="Notes (optional): what made you decide?" />
+      </div>
+      <details class="segments" id="segments-box">
+        <summary>Part of the event looks different? Label a time range <span class="muted" id="seg-count"></span></summary>
+        <p class="muted small">Zoom the plot to the part you mean, choose its class, then press “Add from zoom”.
+          The event label applies to every other minute.</p>
+        <div class="label-row">
+          <select id="seg-class"></select>
+          <button type="button" class="btn" id="seg-add">Add from zoom</button>
+        </div>
+        <ul id="seg-list"></ul>
+      </details>
+      <p class="muted small" id="saved-line"></p>
+    </section>
+  </main>
+</div>
+
+<dialog id="settings">
+  <form method="dialog" class="dialog">
+    <h2>Settings</h2>
+    <p class="muted small">Saved on ganymede for your user. Changes apply right away.</p>
+    <fieldset><legend>Tabs to show</legend><div id="set-tabs" class="tab-checks"></div></fieldset>
+    <div class="two">
+      <label>Tab to open first<select id="set-default_tab"></select></label>
+      <label>Queue order<select id="set-queue_order"><option value="random">Random</option>
+        <option value="chronological">By receiver and time</option></select></label>
+    </div>
+    <div class="two">
+      <label>Window ± minutes<input id="set-pad_minutes" type="number" min="1" max="30" /></label>
+      <label>Comparison satellites<input id="set-comparison_satellites" type="number" min="1" max="20" /></label>
+    </div>
+    <div class="two">
+      <label>Elevation mask (°)<input id="set-elevation_mask_deg" type="number" min="5" max="80" /></label>
+      <label>20 Hz plot rate
+        <select id="set-highrate_decimate_hz"><option value="20">20 Hz (full)</option><option value="10">10 Hz</option>
+          <option value="5">5 Hz</option></select></label>
+    </div>
+    <div class="dialog-buttons">
+      <button value="cancel" class="btn ghost">Cancel</button>
+      <button value="save" id="settings-save" class="btn">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="help">
+  <div class="dialog">
+    <h2>How to label</h2>
+    <p>Each event is one satellite at one receiver with S4 above 0.2 for one or more consecutive minutes.
+      Decide what caused it. Full guide: <code>docs/labeling_guide.md</code> in the repository.</p>
+    <ul>
+      <li><b>Scintillation</b>: fast C/N₀ fading on L1 and L2 together, often with σφ and short τ; other satellites
+        in the same part of the sky are affected; no repeat on the neighbouring day.</li>
+      <li><b>Multipath</b>: low elevation, slow quasi-periodic fading, often stronger on one frequency, little σφ,
+        long τ; the same pattern repeats one sidereal day later (Sidereal repeat tab).</li>
+      <li><b>RFI</b>: C/N₀ drops on many satellites at the same moment regardless of where they are in the sky.</li>
+      <li><b>Unsure/Artifact</b>: data gaps, loss of lock, cycle-slip garbage, clock jumps, or you cannot tell.</li>
+    </ul>
+    <h3>Keys</h3>
+    <p><kbd>1</kbd>–<kbd>4</kbd> label and go to next · <kbd>H</kbd>/<kbd>L</kbd> confidence · <kbd>R</kbd> save for
+      reviewer · <kbd>S</kbd> skip · <kbd>←</kbd>/<kbd>→</kbd> previous/next · <kbd>Tab</kbd> number keys
+      <kbd>Shift</kbd>+<kbd>1</kbd>… switch tabs · <kbd>Q</kbd> queue</p>
+    <p class="muted small">Every label is written to disk on ganymede the moment you press it. You can close the
+      browser at any time and continue later.</p>
+    <div class="dialog-buttons"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='app.js', v=version) }}"></script>
+</body>
+</html>
