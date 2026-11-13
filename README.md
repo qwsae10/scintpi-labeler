@@ -46,6 +46,18 @@ it, open its folder and run `bash run_mac_linux.sh` on macOS/Linux or
 double-click `run_windows.bat` on Windows. You need Python 3.10+ and an
 internet connection for the first launch. After setup it works offline.
 
+Already cloned this repository? The data are not in the repository; they are
+in that ZIP. Extract it anywhere, then from the clone:
+
+```bash
+python -m pip install -e .
+SCINTLAB_DATA_ROOT=/path/to/scintpi-demo-50 scintlab serve      # macOS/Linux
+```
+
+On Windows PowerShell: `$env:SCINTLAB_DATA_ROOT="C:\path\to\scintpi-demo-50"; scintlab serve`.
+Open http://localhost:8765. `SCINTLAB_DATA_ROOT` always names the data folder;
+on ganymede it defaults to `/titan/frodrigues/scint_labeler`.
+
 To build a fresh demo on Ganymede, `scintlab snapshot --n 50` writes 50 events, a copy of the app
 and launchers to `/titan/frodrigues/scint_labeler/snapshots/<name>.zip`
 (size depends on the selected events). Copy the zip to any laptop with Python 3.10+, unzip it and
