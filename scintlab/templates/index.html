@@ -67,6 +67,7 @@
       </div>
       <div class="facts" id="ev-facts"></div>
       <div class="nav">
+        <span id="save-state" class="save-state"></span>
         <span id="ev-pos" class="muted"></span>
         <button class="btn ghost" id="prev" title="Previous (←)">←</button>
         <button class="btn ghost" id="next" title="Next (→)">→</button>
@@ -81,12 +82,15 @@
       <label id="sky-hours-wrap" class="hidden">Sky map span
         <select id="sky-hours"><option value="">Whole day</option><option value="1">±1 h</option>
           <option value="3">±3 h</option><option value="6">±6 h</option></select></label>
-      <span class="muted small">Scroll to zoom, double-click to reset. Shaded band = high-S4 minutes.</span>
+      <span class="muted small" id="gesture-hint">Swipe sideways to pan · pinch or ⌘-scroll to zoom · ⇧-scroll moves a
+        panel up/down, ⌘⇧-scroll stretches it · drag to mark a range · double-click or <kbd>0</kbd> resets.
+        Shaded band = high-S4 minutes.</span>
     </div>
     <section class="plot-card">
       <div class="plot-msg hidden" id="plot-msg"></div>
       <div class="spinner hidden" id="spinner">Loading…</div>
       <div id="plot"></div>
+      <div id="sky" class="hidden"></div>
     </section>
 
     <section class="review-panel hidden" id="review-panel">
@@ -109,12 +113,10 @@
       </div>
       <details class="segments" id="segments-box">
         <summary>Part of the event looks different? Label a time range <span class="muted" id="seg-count"></span></summary>
-        <p class="muted small">Zoom the plot to the part you mean, choose its class, then press “Add from zoom”.
-          The event label applies to every other minute.</p>
-        <div class="label-row">
-          <select id="seg-class"></select>
-          <button type="button" class="btn" id="seg-add">Add from zoom</button>
-        </div>
+        <p class="muted small">Drag across the plot over the part you mean, then press <kbd>1</kbd>–<kbd>4</kbd> for
+          its class (<kbd>Esc</kbd> cancels). Click a range to select it: a number changes its class,
+          <kbd>Delete</kbd> removes it, and its edges can be dragged. Ranges are saved with the event label;
+          the event label applies to every other minute.</p>
         <ul id="seg-list"></ul>
       </details>
       <p class="muted small" id="saved-line"></p>
@@ -168,10 +170,21 @@
     </ul>
     <h3>Keys</h3>
     <p><kbd>1</kbd>–<kbd>4</kbd> label and go to next · <kbd>H</kbd>/<kbd>L</kbd> confidence · <kbd>R</kbd> save for
-      reviewer · <kbd>S</kbd> skip · <kbd>←</kbd>/<kbd>→</kbd> previous/next ·
-      <kbd>Shift</kbd>+<kbd>1</kbd>… switch tabs · <kbd>Q</kbd> show/hide queue · <kbd>?</kbd> this help</p>
-    <p class="muted small">Every label is written to disk on ganymede the moment you press it. You can close the
-      browser at any time and continue later.</p>
+      reviewer · <kbd>S</kbd> skip · <kbd>N</kbd> write a note (<kbd>Enter</kbd> returns) ·
+      <kbd>←</kbd>/<kbd>→</kbd> previous/next · <kbd>U</kbd> back to the event you last labeled</p>
+    <p><kbd>Tab</kbd>/<kbd>⇧Tab</kbd> next/previous tab · <kbd>`</kbd> the tab you were on before ·
+      <kbd>⇧1</kbd>… a tab directly · <kbd>0</kbd> reset the zoom · <kbd>Q</kbd> show/hide queue ·
+      <kbd>?</kbd> this help</p>
+    <h3>Plot</h3>
+    <p>Swipe sideways with two fingers to pan in time; pinch or <kbd>⌘</kbd>-scroll to
+      zoom at the cursor; <kbd>⇧</kbd>-scroll moves the panel under the cursor up/down and <kbd>⌘⇧</kbd>-scroll
+      stretches it; vertical scrolling scrolls the page. <kbd>⌘</kbd>-drag pans. The time tabs (Overview, 20 Hz,
+      Other satellites, Sidereal) share one time window: zoom on one and the others show the same minutes.</p>
+    <p>Drag across the plot to mark part of the event, then press <kbd>1</kbd>–<kbd>4</kbd> for its class;
+      <kbd>Esc</kbd> cancels. Click a range to select it: a number changes its class, <kbd>Delete</kbd> removes
+      it, its edges can be dragged.</p>
+    <p class="muted small">Labels are saved in the background the moment you press them; the corner of the header
+      shows anything still being written. You can close the browser at any time and continue later.</p>
     <div class="dialog-buttons"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>
   </div>
 </dialog>

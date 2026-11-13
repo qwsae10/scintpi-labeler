@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -17,7 +19,9 @@ COMP_COLORS = ["#2f6fed", "#23a7a0", "#8a63d2", "#e17b3a", "#cf4d6f", "#5d8f3f",
                "#aa6d00", "#667085", "#b5487d", "#3c7d9e"]
 
 
-MAX_POINTS = 12000  # per trace; longer series are reduced to a min/max envelope
+# Per trace; longer series are reduced to a min/max envelope. The 20 Hz tab asks again for the
+# visible range at full rate once you zoom in, so this only has to cover a screen width or two.
+MAX_POINTS = 8000
 
 
 def envelope(t: pd.Series, y: pd.Series, max_points: int = MAX_POINTS):
@@ -86,6 +90,82 @@ def robust_range(values, lo_q=0.5, hi_q=99.5, pad=0.1, zero=False, symmetric=Fal
     return [lo if zero else lo - pad * span, hi + pad * span]
 
 
+def _union(ranges):
+    rs = [r for r in ranges if r]
+    return [min(r[0] for r in rs), max(r[1] for r in rs)] if rs else None
+
+
+def _comparison(sec: pd.DataFrame, prn: str, mask: float, n: int) -> list[str]:
+    """The n other satellites above the mask with the most seconds of L1 C/N0 in the window."""
+    others = sec[sec["prn"].ne(prn) & sec["snr1"].notna() & sec["elev"].gt(mask)]
+    return others.groupby("prn")["datetime"].nunique().sort_values(ascending=False).head(n).index.tolist()
+
+
+def _repeats(rx: str, prn: str, t0: pd.Timestamp, t1: pd.Timestamp):
+    """The day before and after: [(label, color, time shift or None, note)]."""
+    out = []
+    for days, color, label in ((-1, "#e1802f", "day before"), (1, "#2f6fed", "day after")):
+        rep = data.geometric_repeat(rx, prn, t0, t1, days)
+        if rep is None:
+            out.append((label, color, None, f"{label}: no data"))
+        elif rep[1] > 2.0:
+            out.append((label, color, None, f"{label}: no repeat of this sky track (best match {rep[1]:.1f}° off)"))
+        else:
+            out.append((label, color, pd.Timedelta(seconds=rep[0]),
+                        f"{label}: shifted {rep[0] / 3600:+.3f} h, track matches within {rep[1]:.1f}°"))
+    return out
+
+
+def shared_ranges(event: dict, settings: dict) -> dict:
+    """One y range per quantity for all time tabs of an event, so switching tabs keeps the scale:
+    {"cn0": dB-Hz, "s4": S4, "elev": degrees}. Each is the union of the ranges the tabs would pick on
+    their own (Overview: this satellite's 1 s C/N0 on every channel; 20 Hz: its full-rate C/N0;
+    Other satellites: the comparison satellites; Sidereal: the neighbouring days), so no tab cuts
+    off more of a fade than it did by itself."""
+    return _shared_ranges(event["receiver"], event["prn"], str(event["start_utc"]), str(event["end_utc"]),
+                          float(settings.get("pad_minutes", 20)), float(settings.get("elevation_mask_deg", 10)),
+                          int(settings.get("comparison_satellites", 10)), float(settings.get("highrate_decimate_hz", 20)))
+
+
+@lru_cache(maxsize=256)
+def _shared_ranges(rx, prn, start_utc, end_utc, pad, mask, n, rate_hz):
+    start, end, t0, t1 = _times({"start_utc": start_utc, "end_utc": end_utc}, {"pad_minutes": pad})
+    thr = float(config.load()["candidates"]["s4_threshold"])
+    cn0_q = {"lo_q": 0.1, "hi_q": 99.9, "min_span": 6}
+    s4_q = {"hi_q": 100, "zero": True, "min_span": thr * 1.5}
+    sec = data.window(rx, "second", t0, t1)
+    mins = data.window(rx, "minute", t0.floor("min"), t1, prn)
+    cn0, s4 = [], []
+    tgt = sec[sec["prn"] == prn] if len(sec) else sec
+    if _channels(tgt, "snr"):
+        cn0.append(robust_range(pd.concat([tgt[f"snr{i}"] for i in _channels(tgt, "snr")]), lo_q=0.2, hi_q=99.8, min_span=6))
+        comp = _comparison(sec, prn, mask, n)
+        cn0.append(robust_range(sec.loc[sec["prn"].isin(comp), "snr1"], **cn0_q))
+    hr = data.window(rx, "highrate", t0, t1, prn)
+    step = max(1, int(round(20 / rate_hz)))
+    cn0 += [robust_range(hr[f"snr{i}"].iloc[::step], **cn0_q) for i in _channels(hr, "snr")]
+    if _channels(mins, "s4_"):
+        s4.append(robust_range(pd.concat([mins[f"s4_{i}"] for i in _channels(mins, "s4_")]), **s4_q))
+    for _, _, dt, _ in _repeats(rx, prn, t0, t1):
+        if dt is None:
+            continue
+        o = data.window(rx, "second", t0 + dt, t1 + dt, prn)
+        om = data.window(rx, "minute", (t0 + dt).floor("min"), t1 + dt, prn)
+        if "snr1" in o:
+            cn0.append(robust_range(o["snr1"], **cn0_q))
+        if "s4_1" in om:
+            s4.append(robust_range(om["s4_1"], **s4_q))
+    return {"cn0": _union(cn0), "s4": _union(s4), "elev": [0, 92]}
+
+
+def _tag(out: dict, fig, rows: dict) -> dict:
+    """Name the quantity on each tagged row's y axis, layout.meta.yq = {"yaxis3": "cn0", ...}: the
+    app keeps a y range set by hand per quantity, so it carries across tabs as the shared ones do."""
+    yq = {fig.get_subplot(r, 1).yaxis.plotly_name: q for r, q in rows.items()}
+    out["layout"].setdefault("meta", {})["yq"] = yq
+    return out
+
+
 def _yaxis_rows(fig, rows):
     """Map each y-axis name ('y', 'y2', ...) to its subplot row, secondary axes included."""
     out = {}
@@ -127,8 +207,10 @@ def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
     return fig.to_plotly_json()
 
 
+# Time plots are SVG, not WebGL: during a pan or zoom the app moves the drawn SVG with a transform
+# (as Plotly's own drag does) and redraws once the gesture pauses; WebGL canvases would stay behind.
 def _line(fig, x, y, name, row, color, dash="solid", width=1.4, secondary=False, show=True, mode="lines",
-          gl=True, unit=""):
+          gl=False, unit=""):
     cls = go.Scattergl if gl else go.Scatter
     fig.add_trace(cls(x=x, y=y, mode=mode, name=name, showlegend=show, line={"color": color, "width": width,
                                                                                "dash": dash},
@@ -184,7 +266,8 @@ def overview(event: dict, settings: dict) -> dict:
             _line(fig, mins["datetime"], mins[f"s4_corrected_{i}"], f"S4 corr. {names[i]}", row["s4"],
                   CH_COLORS[i], dash="dot", width=1.1, gl=False)
     fig.add_hline(y=thr, line_dash="dash", line_color="#c23b4a", line_width=1.2, row=row["s4"], col=1)
-    s4r = robust_range(pd.concat(s4_all) if s4_all else [], hi_q=100, zero=True, min_span=thr * 1.5)
+    shared = shared_ranges(event, settings)
+    s4r = shared["s4"] or robust_range(pd.concat(s4_all) if s4_all else [], hi_q=100, zero=True, min_span=thr * 1.5)
 
     if show_tau:
         taus = []
@@ -220,10 +303,8 @@ def overview(event: dict, settings: dict) -> dict:
         fig.update_yaxes(title_text="rad", range=robust_range(pd.concat(good_vals), hi_q=100, zero=True,
                                                               min_span=0.2), row=row["sp"], col=1)
 
-    fig.update_yaxes(title_text="dB-Hz", range=robust_range(pd.concat([sec[f"snr{i}"] for i in _channels(sec, "snr")])
-                                                            if _channels(sec, "snr") else [], lo_q=0.2, hi_q=99.8,
-                                                            min_span=6), row=row["cn0"], col=1)
-    fig.update_yaxes(title_text="Elev (°)", range=[0, 92], row=row["geo"], col=1, secondary_y=False)
+    fig.update_yaxes(title_text="dB-Hz", range=shared["cn0"], row=row["cn0"], col=1)
+    fig.update_yaxes(title_text="Elev (°)", range=shared["elev"], row=row["geo"], col=1, secondary_y=False)
     fig.update_yaxes(title_text="Azim (°)", range=[0, 360], row=row["geo"], col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="S4", range=s4r, row=row["s4"], col=1)
     if event.get("rx_type") == "sc2":
@@ -231,7 +312,8 @@ def overview(event: dict, settings: dict) -> dict:
                            yref="paper", x=0.5, y=1.0, yshift=4, xanchor="center", yanchor="bottom",
                            showarrow=False, font={"color": "#b54708", "size": 11})
     heights = {"cn0": 230, "geo": 140, "s4": 190, "tau": 160, "tec": 160, "sp": 190}
-    return _layout(fig, sum(heights[k] for k, _, _ in panels) + 120, start, end, t0, t1, n)
+    out = _layout(fig, sum(heights[k] for k, _, _ in panels) + 120, start, end, t0, t1, n)
+    return _tag(out, fig, {row["cn0"]: "cn0", row["geo"]: "elev", row["s4"]: "s4"})
 
 
 # --------------------------------------------------------------------------- high rate
@@ -258,11 +340,12 @@ def highrate(event: dict, settings: dict) -> dict:
              [f"Detrended phase, receiver clock removed, {names[i]} (0.1 Hz high-pass; |φ| > 50 rad hidden)"
               for i in ph_ch]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04, subplot_titles=titles)
+    cn0 = shared_ranges(event, settings)["cn0"]
     r = 1
     for i in snr_ch:
         _line(fig, *envelope(hr["datetime"], hr[f"snr{i}"]), f"C/N₀ {names[i]}", r, CH_COLORS[i], width=0.8,
               unit=" dB-Hz")
-        fig.update_yaxes(title_text="dB-Hz", range=robust_range(hr[f"snr{i}"], lo_q=0.1, hi_q=99.9, min_span=6),
+        fig.update_yaxes(title_text="dB-Hz", range=cn0 or robust_range(hr[f"snr{i}"], lo_q=0.1, hi_q=99.9, min_span=6),
                          row=r, col=1)
         r += 1
     for i in ph_ch:
@@ -272,16 +355,20 @@ def highrate(event: dict, settings: dict) -> dict:
         slip = hr.get(f"slip{i}")
         if slip is not None and slip.fillna(False).astype(bool).any():
             sl = slip.fillna(False).astype(bool) & ph.notna()
-            fig.add_trace(go.Scattergl(x=hr.loc[sl, "datetime"], y=ph[sl], mode="markers",
-                                       name=f"cycle slip {names[i]}",
-                                       marker={"color": "#d92d20", "size": 7, "symbol": "x"}), row=r, col=1)
+            fig.add_trace(go.Scatter(x=hr.loc[sl, "datetime"], y=ph[sl], mode="markers",
+                                     name=f"cycle slip {names[i]}",
+                                     marker={"color": "#d92d20", "size": 7, "symbol": "x"}), row=r, col=1)
         fig.update_yaxes(title_text="rad", range=robust_range(ph, hi_q=99.5, symmetric=True, pad=0.25,
                                                               min_span=0.3), row=r, col=1)
         r += 1
     out = _layout(fig, 230 * rows + 80, start, end, t0, t1, rows)
+    lo, hi = view or (t0, t1)
     if view:
-        out["layout"]["xaxis"]["range"] = [view[0], view[1]]
-    return out
+        out["layout"]["xaxis"]["range"] = [lo, hi]
+    # For the app: the span this figure holds and whether it is an envelope, so it knows when a
+    # zoom or pan needs the full-rate samples of the new range (UTC epoch ms).
+    out["layout"]["meta"] = {"reduced": bool(reduced), "lo_ms": int(lo.value // 10**6), "hi_ms": int(hi.value // 10**6)}
+    return _tag(out, fig, {k + 1: "cn0" for k in range(len(snr_ch))})
 
 
 # --------------------------------------------------------------------------- other satellites
@@ -296,8 +383,7 @@ def satellites(event: dict, settings: dict) -> dict:
     mask = float(settings.get("elevation_mask_deg", 10))
     thr = float(config.load()["candidates"]["s4_threshold"])
     n = int(settings.get("comparison_satellites", 10))
-    others = sec[sec["prn"].ne(prn) & sec["snr1"].notna() & sec["elev"].gt(mask)]
-    comp = others.groupby("prn")["datetime"].nunique().sort_values(ascending=False).head(n).index.tolist()
+    comp = _comparison(sec, prn, mask, n)
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06, row_heights=[0.42, 0.38, 0.2],
                         subplot_titles=(f"C/N₀ L1 of the {len(comp)} best-covered other satellites above {mask:g}° "
                                         f"(target in black)",
@@ -319,10 +405,10 @@ def satellites(event: dict, settings: dict) -> dict:
         count = m.assign(hi=m["s4_1"] > thr).groupby("datetime")["hi"].sum()
         fig.add_trace(go.Bar(x=count.index, y=count.values, name="N sats S4>thr", marker_color="#667085",
                              showlegend=False), row=3, col=1)
-    fig.update_yaxes(title_text="dB-Hz", row=1, col=1)
+    fig.update_yaxes(title_text="dB-Hz", range=shared_ranges(event, settings)["cn0"], row=1, col=1)
     fig.update_yaxes(title_text="", row=2, col=1, tickfont={"size": 9})
     fig.update_yaxes(title_text="count", row=3, col=1)
-    return _layout(fig, 980, start, end, t0, t1, 3)
+    return _tag(_layout(fig, 980, start, end, t0, t1, 3), fig, {1: "cn0"})
 
 
 # --------------------------------------------------------------------------- sidereal repeat
@@ -342,19 +428,12 @@ def sidereal(event: dict, settings: dict) -> dict:
           show=False)
     _line(fig, sec["datetime"], sec["elev"], "this day", 3, "#101828", show=False)
     notes = []
-    for days, color, label in ((-1, "#e1802f", "day before"), (1, "#2f6fed", "day after")):
-        rep = data.geometric_repeat(rx, prn, t0, t1, days)
-        if rep is None:
-            notes.append(f"{label}: no data")
+    for label, color, dt, note in _repeats(rx, prn, t0, t1):
+        notes.append(note)
+        if dt is None:
             continue
-        shift, mis = rep
-        if mis > 2.0:
-            notes.append(f"{label}: no repeat of this sky track (best match {mis:.1f}° off)")
-            continue
-        dt = pd.Timedelta(seconds=shift)
         o = data.window(rx, "second", t0 + dt, t1 + dt, prn)
         om = data.window(rx, "minute", (t0 + dt).floor("min"), t1 + dt, prn)
-        notes.append(f"{label}: shifted {shift / 3600:+.3f} h, track matches within {mis:.1f}°")
         _line(fig, o["datetime"] - dt, o["snr1"], label, 1, color, width=1.1, unit=" dB-Hz")
         if "s4_1" in om:
             _line(fig, om["datetime"] - dt, om["s4_1"], label, 2, color, mode="lines+markers", gl=False, show=False)
@@ -362,12 +441,13 @@ def sidereal(event: dict, settings: dict) -> dict:
     fig.add_annotation(text="<br>".join(notes), xref="paper", yref="paper", x=1, y=1.0, yshift=24,
                        xanchor="right", yanchor="bottom", showarrow=False, align="right",
                        font={"size": 11, "color": "#475467"})
-    fig.update_yaxes(title_text="dB-Hz", row=1, col=1)
-    fig.update_yaxes(title_text="S4", rangemode="tozero", row=2, col=1)
-    fig.update_yaxes(title_text="Elev (°)", row=3, col=1)
+    shared = shared_ranges(event, settings)
+    fig.update_yaxes(title_text="dB-Hz", range=shared["cn0"], row=1, col=1)
+    fig.update_yaxes(title_text="S4", range=shared["s4"], rangemode="tozero", row=2, col=1)
+    fig.update_yaxes(title_text="Elev (°)", range=shared["elev"], row=3, col=1)
     out = _layout(fig, 840, start, end, t0, t1, 3)
     out["layout"]["margin"]["t"] = 110
-    return out
+    return _tag(out, fig, {1: "cn0", 2: "s4", 3: "elev"})
 
 
 # --------------------------------------------------------------------------- skyplot
@@ -403,9 +483,11 @@ def skyplot(event: dict, settings: dict) -> dict:
         else:
             d = day
         d = d.sort_values(col, na_position="first")
+        # A day is ~30k satellite-minutes per map: rounded to what a 4 px dot can show (as float64:
+        # a rounded float32 still prints as 1.1299999952316284), the payload is much smaller.
         fig.add_trace(go.Scatterpolargl(
-            r=90 - d["elev"], theta=d["azim"], mode="markers",
-            marker={"size": 4, "color": d[col], "cmin": lo, "cmax": hi, "colorscale": cmap,
+            r=(90 - d["elev"].astype(float)).round(1), theta=d["azim"].astype(float).round(1), mode="markers",
+            marker={"size": 4, "color": d[col].astype(float).round(3), "cmin": lo, "cmax": hi, "colorscale": cmap,
                     "colorbar": {"title": "", "len": 0.38, "x": 0.44 + 0.56 * (c - 1),
                                  "y": 0.79 - 0.58 * (r - 1), "thickness": 10}},
             text=d["prn"] + " " + d["datetime"].dt.strftime("%H:%M"), showlegend=False,

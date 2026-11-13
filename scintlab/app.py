@@ -123,8 +123,17 @@ def create_app() -> Flask:
     @app.get("/api/queue")
     def queue():
         ev = filtered(request.args)
-        cols = ["event_id", "receiver", "prn", "start_utc", "peak_s4", "max_elev", "rx_type"]
-        items = [{k: _clean(v) for k, v in r.items()} for r in ev[cols].to_dict("records")]
+        # Everything the event header needs, and my decision, so moving to the next event needs
+        # no request of its own.
+        cols = ["event_id", "receiver", "prn", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
+                "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason"]
+        cols = [c for c in cols if c in ev]
+        mine = store().mine
+        items = []
+        for r in ev[cols].to_dict("records"):
+            d = {k: _clean(v) for k, v in r.items()}
+            d["decision"] = mine.get(r["event_id"])
+            items.append(d)
         return jsonify({"count": len(items), "events": items})
 
     @app.get("/api/event/<event_id>")

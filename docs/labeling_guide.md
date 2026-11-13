@@ -37,7 +37,15 @@ for example an interesting or confusing case. Notes are optional but help a
 lot ("L1 and L2 fade together; repeats yesterday").
 
 Pressing a number saves and moves to the next event. **Skip** (`S`) leaves it
-for later. Nothing is lost if you close the browser.
+for later. Nothing is lost if you close the browser. Labeled events stay in the
+queue (greyed, with a dot in their class colour), so `←` goes back to one you
+want to change, and `U` jumps to the last one you labeled. `N` writes a note
+(`Enter` returns to the keys).
+
+Switch tabs with `Tab` / `Shift+Tab`, jump back to the previous tab with `` ` ``,
+or go to one directly with `Shift+1`… The Overview, 20 Hz, Other satellites and
+Sidereal tabs share one time window: zoom in on a fade in one and the others
+show the same minutes.
 
 ## How to decide: the evidence, tab by tab
 
@@ -107,7 +115,9 @@ Simultaneous high S4 at nearby receivers supports the ionosphere.
 Much of the data near the horizon or from older receivers looks noisy. Some
 rules:
 
-1. **Zoom in.** Scroll on the plot to zoom and double-click to reset. A
+1. **Zoom in.** Pinch (or `⌘`-scroll) on the plot to zoom at the cursor, swipe
+   sideways to pan, and double-click or press `0` to reset; `Shift`-scroll moves
+   a panel up or down and `⌘Shift`-scroll stretches it. A
    20-minute window of 20 Hz data looks like noise at full width. Zoomed to a
    minute, fading versus oscillation is usually clear.
 2. **Change the window.** The "Window ±" box sets the context (1–30 min).
@@ -119,9 +129,11 @@ rules:
    choose Unsure/Artifact with High confidence.
 4. **Raise the elevation mask** in the queue filter (e.g. 20° or 30°) to work
    on clearer events first. Come back to the low ones later.
-5. **Part of the event is different?** Zoom to that part, open "Label a time
-   range", choose the class and press "Add from zoom". The main label then
-   applies to the remaining minutes.
+5. **Part of the event is different?** Drag across the plot over that part and
+   press `1`–`4` for its class (`Esc` cancels). Click a marked range to select
+   it: a number changes its class, `Delete` removes it, and its edges can be
+   dragged. Ranges snap to whole minutes inside the shaded event and are saved
+   with the event label, which then applies to the remaining minutes.
 6. **Not sure? Say so.** Unsure/Artifact with a note is a useful label. A
    wrong confident label damages the dataset.
 

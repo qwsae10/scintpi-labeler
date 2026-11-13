@@ -36,6 +36,10 @@ def _read_small(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
 def clear_cache() -> None:
     _read_second.cache_clear()
     _read_small.cache_clear()
+    geometric_repeat.cache_clear()
+    from scintlab import figures  # its per-event y ranges are built from these reads
+
+    figures._shared_ranges.cache_clear()
 
 
 def _load(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
@@ -100,6 +104,7 @@ def receivers_on(date: str) -> list[str]:
     return sorted(p.parent.parent.name for p in config.products_dir().glob(f"*/{tag}/meta.json"))
 
 
+@lru_cache(maxsize=512)  # ~0.1 s a search, asked for by the Sidereal tab and the shared y ranges
 def geometric_repeat(receiver: str, prn: str, t0: pd.Timestamp, t1: pd.Timestamp, days: int):
     """Time shift (s) that puts ``prn`` on another day (``days`` = -1 or +1) at the same azimuth and
     elevation as during [t0, t1). Returns ``(shift_s, median_mismatch_deg)`` or None.

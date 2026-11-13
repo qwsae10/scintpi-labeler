@@ -34,6 +34,18 @@ input, select { font: inherit; padding: 5px 7px; border: 1px solid var(--line); 
 .queue-list li:hover { background: #f9fafb; }
 .queue-list li.current { background: #eef4ff; }
 .queue-list .s4 { margin-left: auto; font-variant-numeric: tabular-nums; }
+.queue-list li { align-items: center; }
+.queue-list li .dot { flex: none; margin: 0; border: 1px solid transparent; }
+.queue-list li.done { color: var(--muted); }
+.queue-list li .dot.skipped { border-color: var(--muted); }
+
+.save-state { font-size: 12px; color: var(--muted); }
+.save-state.error { color: #b42318; font-weight: 600; }
+
+/* the plot: crosshair to mark a range, resize cursor on a range's edge */
+#plot .nsewdrag { cursor: crosshair !important; }
+#plot.edge .nsewdrag { cursor: ew-resize !important; }
+.segments li.sel { font-weight: 600; }
 
 .btn { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 .btn.ghost { background: #fff; color: var(--ink); border-color: var(--line); }
