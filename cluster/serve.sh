@@ -19,4 +19,7 @@ if [ ! -w "$ROOT/labels" ]; then
   exit 1
 fi
 cd "$ROOT"
+# The server answers on many threads; glibc gives each its own malloc arena and keeps what was freed
+# there, so a threaded Python server's memory creeps up. Two arenas keep it near what is in use.
+export MALLOC_ARENA_MAX=2
 exec "$ROOT/env/bin/scintlab" serve --port "$PORT"

@@ -18,14 +18,8 @@ def day_dir(receiver: str, date: str) -> Path:
 
 
 def _read(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
-    # A day of 1 s data is ~300 MB in memory and ganymede login nodes allow 8 GB
-    # per process, so few second tables are cached; minute tables are small.
-    return (_read_second if kind == "second" else _read_small)(receiver, date, kind)
-
-
-@lru_cache(maxsize=3)
-def _read_second(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
-    return _load(receiver, date, kind)
+    """A whole day; only for the minute tables (~1 MB). The 1 s and 20 Hz tables are read by window."""
+    return _read_small(receiver, date, kind)
 
 
 @lru_cache(maxsize=24)
@@ -34,9 +28,8 @@ def _read_small(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
 
 
 def clear_cache() -> None:
-    _read_second.cache_clear()
     _read_small.cache_clear()
-    _read_highrate.cache_clear()
+    _read_window.cache_clear()
     geometric_repeat.cache_clear()
     from scintlab import figures  # its per-event y ranges are built from these reads
 
@@ -53,10 +46,16 @@ def _load(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
     return df
 
 
-@lru_cache(maxsize=16)  # one event window of one satellite is small; the 20 Hz tab and the shared y ranges both read it
-def _read_highrate(receiver: str, date: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: str | None):
-    """Filtered read: the 20-50 Hz file of a day is hundreds of MB, so it is never loaded whole."""
-    path = day_dir(receiver, date) / "highrate.parquet"
+# The 1 s table of a day (every satellite) is ~300 MB once in pandas and the 20 Hz one is several
+# times that, while a tab needs a few hours of it at most. Loading whole days and caching three of
+# them ran the server out of its 8 GB on the ganymede login node: an event's Sidereal tab needs three
+# days, and the app asks for the next event's tabs while you look at this one. So both are read with
+# a filter, which keeps only the rows of the window (and satellite), and the windows are cached
+# instead: an event's tabs ask for the same few windows (all satellites; this one; the neighbouring
+# days), and a window of every satellite is tens of MB at most.
+@lru_cache(maxsize=24)
+def _read_window(receiver: str, date: str, kind: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: str | None):
+    path = day_dir(receiver, date) / f"{kind}.parquet"
     if not path.exists():
         return None
     naive = [t.tz_convert("UTC").tz_localize(None) if t.tzinfo else t for t in (t0, t1)]
@@ -73,8 +72,8 @@ def window(receiver: str, kind: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: st
     """Rows of ``kind`` (minute, second, highrate) in [t0, t1), joined across UTC days."""
     parts = []
     for d in pd.date_range(t0.floor("D"), t1.floor("D"), freq="D"):
-        if kind == "highrate":
-            df = _read_highrate(receiver, d.strftime("%Y-%m-%d"), t0, t1, prn)
+        if kind in ("second", "highrate"):
+            df = _read_window(receiver, d.strftime("%Y-%m-%d"), kind, t0, t1, prn)
             if df is not None:
                 parts.append(df)
             continue
