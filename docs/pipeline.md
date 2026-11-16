@@ -21,12 +21,19 @@ from `/titan/frodrigues/scint_labeler`.
 
 ## 1. Update the code
 
-Commit and push from a laptop (to GitHub and to the `ganymede` remote,
-`/titan/frodrigues/git/scintpi-labeler.git`), then on ganymede:
+GitHub (`qwsae10/scintpi-labeler`) is the only shared remote. Push to `main`
+(small fixes) or open a pull request (larger changes) from a laptop. Once the
+change is on `main`, pull it on ganymede:
 
 ```bash
 git -C code pull --ff-only
 ```
+
+`code/` pulls from GitHub over HTTPS, so it needs no GitHub login. Its git
+directory is group-writable, so any `uars` member can run the pull.
+`core.fileMode` is off there, because group permission changes would otherwise
+show up as local edits and block the pull. Restart any running `scintlab serve`
+to load the new code.
 
 ## 2. Inventory the raw archive
 
