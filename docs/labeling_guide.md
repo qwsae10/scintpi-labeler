@@ -49,7 +49,8 @@ show the same minutes.
 
 The calendar above the queue list shows which days have events. A deeper blue
 day has more left to do, and a tick means every event of that day is decided.
-Click a day to limit the queue to it, `Shift`-click a second day for a range,
+Click a day to limit the queue to it (shown by receiver and time, unless an
+Order is picked in the filters), `Shift`-click a second day for a range,
 and click it again (or "All days") to go back. `[` and `]` move to the
 previous or next day with events left. The filters fold away under
 **Filters**.

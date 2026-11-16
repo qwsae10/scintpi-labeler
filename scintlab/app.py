@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 
 import numpy as np
@@ -177,6 +178,7 @@ def create_app() -> Flask:
         for key in ("t0", "t1"):
             if request.args.get(key):
                 settings[key] = request.args[key]
+        began = time.perf_counter()
         try:
             fig = figures.TABS[tab](event_dict(event_id), settings)
         except figures.Missing as e:
@@ -184,7 +186,13 @@ def create_app() -> Flask:
         except Exception as e:
             logger.exception("figure failed")
             return jsonify({"error": f"could not draw {tab}: {e}"}), 500
-        return app.response_class(json.dumps({"figure": fig}, cls=PlotlyJSONEncoder), mimetype="application/json")
+        built = time.perf_counter()
+        body = json.dumps({"figure": fig}, cls=PlotlyJSONEncoder)
+        res = app.response_class(body, mimetype="application/json")
+        # read by the app (console) and by the browser's network panel: where a slow tab spends its time
+        res.headers["Server-Timing"] = (f"build;dur={1000 * (built - began):.0f}, "
+                                        f"json;dur={1000 * (time.perf_counter() - built):.0f}")
+        return res
 
     @app.post("/api/event/<event_id>/label")
     def label(event_id):

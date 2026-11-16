@@ -36,6 +36,7 @@ def _read_small(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
 def clear_cache() -> None:
     _read_second.cache_clear()
     _read_small.cache_clear()
+    _read_highrate.cache_clear()
     geometric_repeat.cache_clear()
     from scintlab import figures  # its per-event y ranges are built from these reads
 
@@ -52,6 +53,7 @@ def _load(receiver: str, date: str, kind: str) -> pd.DataFrame | None:
     return df
 
 
+@lru_cache(maxsize=16)  # one event window of one satellite is small; the 20 Hz tab and the shared y ranges both read it
 def _read_highrate(receiver: str, date: str, t0: pd.Timestamp, t1: pd.Timestamp, prn: str | None):
     """Filtered read: the 20-50 Hz file of a day is hundreds of MB, so it is never loaded whole."""
     path = day_dir(receiver, date) / "highrate.parquet"

@@ -119,9 +119,11 @@ def _repeats(rx: str, prn: str, t0: pd.Timestamp, t1: pd.Timestamp):
 def shared_ranges(event: dict, settings: dict) -> dict:
     """One y range per quantity for all time tabs of an event, so switching tabs keeps the scale:
     {"cn0": dB-Hz, "s4": S4, "elev": degrees}. Each is the union of the ranges the tabs would pick on
-    their own (Overview: this satellite's 1 s C/N0 on every channel; 20 Hz: its full-rate C/N0;
-    Other satellites: the comparison satellites; Sidereal: the neighbouring days), so no tab cuts
-    off more of a fade than it did by itself."""
+    their own from the event's day (Overview: this satellite's 1 s C/N0 on every channel; 20 Hz: its
+    full-rate C/N0; Other satellites: the comparison satellites), so no tab cuts off more of a fade
+    than it did by itself. The neighbouring days (Sidereal) are left out: finding them reads two more
+    whole days of 1 s data, which made every tab of a new event wait for the sidereal search; their
+    curves follow the same track at the same elevation and fall inside the range almost always."""
     return _shared_ranges(event["receiver"], event["prn"], str(event["start_utc"]), str(event["end_utc"]),
                           float(settings.get("pad_minutes", 20)), float(settings.get("elevation_mask_deg", 10)),
                           int(settings.get("comparison_satellites", 10)), float(settings.get("highrate_decimate_hz", 20)))
@@ -146,15 +148,6 @@ def _shared_ranges(rx, prn, start_utc, end_utc, pad, mask, n, rate_hz):
     cn0 += [robust_range(hr[f"snr{i}"].iloc[::step], **cn0_q) for i in _channels(hr, "snr")]
     if _channels(mins, "s4_"):
         s4.append(robust_range(pd.concat([mins[f"s4_{i}"] for i in _channels(mins, "s4_")]), **s4_q))
-    for _, _, dt, _ in _repeats(rx, prn, t0, t1):
-        if dt is None:
-            continue
-        o = data.window(rx, "second", t0 + dt, t1 + dt, prn)
-        om = data.window(rx, "minute", (t0 + dt).floor("min"), t1 + dt, prn)
-        if "snr1" in o:
-            cn0.append(robust_range(o["snr1"], **cn0_q))
-        if "s4_1" in om:
-            s4.append(robust_range(om["s4_1"], **s4_q))
     return {"cn0": _union(cn0), "s4": _union(s4), "elev": [0, 92]}
 
 

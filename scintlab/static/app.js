@@ -47,8 +47,9 @@ const FILTERS = ["status", "receiver", "constellation", "rx_type", "prn", "min_s
 const TIME_TABS = new Set(["overview", "highrate", "satellites", "sidereal"]);
 const MIN = 60000;
 
-async function api(url, opts = {}) {
+async function api(url, opts = {}, onResponse = null) {
   const r = await fetch(url, opts);
+  if (onResponse) onResponse(r);
   const p = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
   if (!r.ok) throw Object.assign(new Error(p.error || `HTTP ${r.status}`), { status: r.status });
   return p;
@@ -139,7 +140,12 @@ function query() {
     const v = $(`#f-${f}`).value.trim();
     if (v) p.set(f, v);
   });
-  if (S.cal.from) { p.set("date_from", S.cal.from); p.set("date_to", S.cal.to); }
+  if (S.cal.from) {
+    p.set("date_from", S.cal.from);
+    p.set("date_to", S.cal.to);
+    // a day (or range) is worked through by receiver and time, unless an order is picked in the filters
+    if (!p.has("order")) p.set("order", "chronological");
+  }
   return p;
 }
 
@@ -231,7 +237,8 @@ function repaintDay(date) {
 function renderCalSel() {
   const { from, to } = S.cal;
   const short = (d) => new Date(d + "T00:00:00Z").toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-  $("#cal-sel-text").textContent = !from ? "events, all days" : from === to ? `events on ${short(from)}` : `events, ${short(from)} – ${short(to)}`;
+  const byTime = from && !$("#f-order").value ? ", by receiver and time" : "";
+  $("#cal-sel-text").textContent = (!from ? "events, all days" : from === to ? `events on ${short(from)}` : `events, ${short(from)} – ${short(to)}`) + byTime;
   $("#cal-all").classList.toggle("hidden", !from);
 }
 
@@ -468,7 +475,12 @@ function fetchFig(id, tab, p) {
   const key = figKey(id, tab, p);
   let hit = figs.get(key);
   if (hit) { figs.delete(key); figs.set(key, hit); return hit; }
-  hit = api(`/api/event/${enc(id)}/tab/${tab}?${p}`);
+  const t0 = performance.now();
+  hit = api(`/api/event/${enc(id)}/tab/${tab}?${p}`, {}, (r) => {
+    const st = r.headers.get("Server-Timing") || "";
+    const ms = (k) => Number((st.match(new RegExp(`${k};dur=(\\d+)`)) || [])[1] || 0);
+    timing.set(key, { build: ms("build"), json: ms("json"), fetch: Math.round(performance.now() - t0) });
+  });
   hit.catch(() => figs.delete(key));
   figs.set(key, hit);
   while (figs.size > FIG_MAX) figs.delete(figs.keys().next().value);
@@ -529,7 +541,7 @@ async function showTab(tab) {
   markTab();
   const q = current();
   if (!q) return;
-  const seq = ++showSeq, id = q.event_id;
+  const seq = ++showSeq, id = q.event_id, began = performance.now();
   const spin = setTimeout(() => $("#spinner").classList.remove("hidden"), 150);
   let res;
   try {
@@ -559,9 +571,23 @@ async function showTab(tab) {
     else await render(res.figure, tab);
   }
   if (seq !== showSeq) return;
+  logTiming(id, tab, began);
   if (!S.openedAt) S.openedAt = Date.now();
   if (TIME_TABS.has(tab)) (self.requestIdleCallback || setTimeout)(() => traceTimes(res.figure));  // ready for the first zoom
   prefetchPlan();
+}
+
+/* Where a tab's wait went, in the browser console (shown at the "Verbose"/debug level):
+   build = server making the figure, json = server encoding it, fetch = request until the body
+   arrived (includes build, json and the transfer), total = from asking for the tab until drawn. */
+const timing = new Map();
+function logTiming(id, tab, began) {
+  const key = [...timing.keys()].reverse().find((k) => k.startsWith(`${id}|${tab}|`));
+  const t = key ? timing.get(key) : null;
+  console.debug(`[scintlab] ${tab} ${id}: total ${Math.round(performance.now() - began)} ms`
+    + (t ? ` (server build ${t.build}, json ${t.json}, fetch ${t.fetch}${t.used ? ", from cache" : ""})` : " (from cache)"));
+  if (t) t.used = true;
+  if (timing.size > 200) timing.delete(timing.keys().next().value);
 }
 
 const PLOT_CONFIG = { responsive: true, displaylogo: false, displayModeBar: false, scrollZoom: false, doubleClick: false };
