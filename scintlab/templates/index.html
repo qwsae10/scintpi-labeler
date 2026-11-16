@@ -22,6 +22,8 @@
       <div class="class-counts" id="class-counts"></div>
     </section>
 
+    <details class="filter-box" id="filter-box">
+    <summary>Filters <span class="muted small" id="filter-sum"></span></summary>
     <form id="filters" class="filters">
       <label>Show
         <select id="f-status">
@@ -34,27 +36,31 @@
       </label>
       <div class="two">
         <label>Receiver<select id="f-receiver"><option value="">All</option></select></label>
-        <label>Date<select id="f-date"><option value="">All</option></select></label>
+        <label>Constellation<select id="f-constellation"><option value="">All</option></select></label>
       </div>
       <div class="two">
-        <label>Constellation<select id="f-constellation"><option value="">All</option></select></label>
         <label>Receiver type
           <select id="f-rx_type"><option value="">All</option><option value="sc2">ScintPi 2</option>
             <option value="sc3">ScintPi 3</option><option value="sc4">ScintPi 4</option></select></label>
-      </div>
-      <div class="two">
         <label>Satellite<input id="f-prn" placeholder="G12" autocomplete="off" /></label>
-        <label>Min peak S4<input id="f-min_s4" type="number" step="0.05" min="0" placeholder="0.2" /></label>
       </div>
       <div class="two">
+        <label>Min peak S4<input id="f-min_s4" type="number" step="0.05" min="0" placeholder="0.2" /></label>
         <label>Elevation mask (°)<input id="f-elev_mask" type="number" step="1" min="0" max="80" /></label>
+      </div>
+      <div class="two">
         <label>Order
           <select id="f-order"><option value="">Settings default</option><option value="stratified">Stratified random</option><option value="random">Random</option>
             <option value="chronological">By receiver and time</option><option value="peak_s4">Highest S4 first</option></select></label>
       </div>
       <button type="submit" class="btn wide">Apply</button>
-      <p class="muted"><strong id="queue-count">0</strong> events match</p>
     </form>
+    </details>
+    <div class="cal" id="cal" title="Click a day to work on it; ⇧-click a second day for a range"></div>
+    <div class="cal-sel">
+      <span><strong id="queue-count">0</strong> <span id="cal-sel-text">events, all days</span></span>
+      <button type="button" class="link hidden" id="cal-all">All days</button>
+    </div>
     <ol class="queue-list" id="queue-list"></ol>
   </aside>
 
@@ -174,7 +180,11 @@
       <kbd>←</kbd>/<kbd>→</kbd> previous/next · <kbd>U</kbd> back to the event you last labeled</p>
     <p><kbd>Tab</kbd>/<kbd>⇧Tab</kbd> next/previous tab · <kbd>`</kbd> the tab you were on before ·
       <kbd>⇧1</kbd>… a tab directly · <kbd>0</kbd> reset the zoom · <kbd>Q</kbd> show/hide queue ·
-      <kbd>?</kbd> this help</p>
+      <kbd>[</kbd>/<kbd>]</kbd> previous/next day with events left · <kbd>?</kbd> this help</p>
+    <h3>Calendar</h3>
+    <p>The calendar in the queue shows the days with events: deeper blue = more left to do, a tick = every
+      event of the day decided. Click a day to work on it alone, <kbd>⇧</kbd>-click a second day for a range,
+      click it again or "All days" to go back to every day. The underlined day is the event on screen.</p>
     <h3>Plot</h3>
     <p>Swipe sideways with two fingers to pan in time; pinch or <kbd>⌘</kbd>-scroll to
       zoom at the cursor; <kbd>⇧</kbd>-scroll moves the panel under the cursor up/down and <kbd>⌘⇧</kbd>-scroll

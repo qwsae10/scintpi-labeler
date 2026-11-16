@@ -12,6 +12,8 @@ const S = {
   rendered: null, yRendered: null, yMan: new Map(),  // ranges the plot was drawn with; y set by hand
   fig: null,              // what is drawn: {tab, time, meta, base (the figure's own shapes)}
   openedAt: null, selSeg: null, pendingSeg: null, draft: null,
+  days: {},               // UTC date -> {n, labeled, skipped}: my progress per day under the filters
+  cal: { from: null, to: null, anchor: null },  // the days the queue is limited to (null = all)
 };
 const $ = (q) => document.querySelector(q);
 const $$ = (q) => Array.from(document.querySelectorAll(q));
@@ -41,7 +43,7 @@ function purgePlots() {
   S.skyId = null;
   S.fig = null;
 }
-const FILTERS = ["status", "receiver", "date", "constellation", "rx_type", "prn", "min_s4", "elev_mask", "order"];
+const FILTERS = ["status", "receiver", "constellation", "rx_type", "prn", "min_s4", "elev_mask", "order"];
 const TIME_TABS = new Set(["overview", "highrate", "satellites", "sidereal"]);
 const MIN = 60000;
 
@@ -137,7 +139,143 @@ function query() {
     const v = $(`#f-${f}`).value.trim();
     if (v) p.set(f, v);
   });
+  if (S.cal.from) { p.set("date_from", S.cal.from); p.set("date_to", S.cal.to); }
   return p;
+}
+
+/* ------------------------------------------------------------------ calendar
+   Months of event days, as in the dashboard. A day's colour is how many events are still to do
+   there (deeper = more); a tick means every event of the day is decided. Click a day to limit the
+   queue to it, ⇧-click another for a range, click it again (or "All days") for every day.
+   [ and ] move to the previous/next day with events left. */
+
+const DAY_MS = 86400000;
+const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+const left = (c) => c.n - c.labeled - c.skipped;
+
+function buildCalendar() {
+  const box = $("#cal");
+  box.innerHTML = "";
+  const dates = S.boot.dates;
+  if (!dates.length) return;
+  const start = Date.parse(dates[0] + "T00:00:00Z"), end = Date.parse(dates[dates.length - 1] + "T00:00:00Z");
+  const fmt = new Intl.DateTimeFormat("en", { month: "short", year: "numeric", timeZone: "UTC" });
+  const frag = document.createDocumentFragment();
+  const s0 = new Date(start);
+  for (let m = new Date(Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth(), 1)); m <= end;
+       m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1))) {
+    const sec = document.createElement("div");
+    sec.className = "month";
+    sec.innerHTML = `<h3>${fmt.format(m)}</h3>`;
+    const g = document.createElement("div");
+    g.className = "grid7";
+    g.innerHTML = [..."SMTWTFS"].map((w) => `<div class="wd">${w}</div>`).join("") + "<div></div>".repeat(m.getUTCDay());
+    const n = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 0)).getUTCDate();
+    for (let d = 1; d <= n; d++) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "day";
+      b.textContent = d;
+      b.dataset.date = ymd(Date.UTC(m.getUTCFullYear(), m.getUTCMonth(), d));
+      b.disabled = true;
+      g.appendChild(b);
+    }
+    sec.appendChild(g);
+    frag.appendChild(sec);
+  }
+  box.appendChild(frag);
+  box.addEventListener("click", (e) => {
+    const b = e.target.closest(".day");
+    if (!b || b.disabled) return;
+    const d = b.dataset.date;
+    if (e.shiftKey && S.cal.anchor) { const r = [S.cal.anchor, d].sort(); selectDays(r[0], r[1], false); }
+    else if (S.cal.from === d && S.cal.to === d) selectDays(null, null);
+    else selectDays(d, d);
+  });
+}
+
+async function loadDays() {
+  const p = query();
+  ["status", "order", "date_from", "date_to"].forEach((k) => p.delete(k));
+  S.days = await api(`/api/days?${p}`);
+  paintCalendar();
+}
+
+function paintDay(b) {
+  const c = S.days[b.dataset.date];
+  b.className = "day";
+  b.textContent = Number(b.dataset.date.slice(8));
+  b.disabled = !c;
+  if (!c) { b.title = ""; return; }
+  const r = left(c), done = c.labeled + c.skipped;
+  if (r === 0) b.classList.add("done");
+  else b.classList.add(`l${Math.max(1, Math.ceil((4 * Math.log1p(r)) / Math.log1p(S.calMax || 1)))}`);
+  if (done && r) b.insertAdjacentHTML("beforeend", `<span class="bar-done"><i style="width:${(100 * done) / c.n}%"></i></span>`);
+  b.title = `${b.dataset.date}: ${c.n} event${c.n === 1 ? "" : "s"}, ${c.labeled} labeled, ${c.skipped} skipped, ${r} left`;
+  const sel = S.cal.from && b.dataset.date >= S.cal.from && b.dataset.date <= S.cal.to;
+  b.classList.toggle("in", !!sel);
+  b.classList.toggle("cur", !!current() && current().date === b.dataset.date);
+}
+
+function paintCalendar() {
+  S.calMax = Math.max(1, ...Object.values(S.days).map(left));
+  $$("#cal .day").forEach(paintDay);
+  renderCalSel();
+}
+
+function repaintDay(date) {
+  const b = date && $(`#cal .day[data-date="${date}"]`);
+  if (b) paintDay(b);
+}
+
+function renderCalSel() {
+  const { from, to } = S.cal;
+  const short = (d) => new Date(d + "T00:00:00Z").toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  $("#cal-sel-text").textContent = !from ? "events, all days" : from === to ? `events on ${short(from)}` : `events, ${short(from)} – ${short(to)}`;
+  $("#cal-all").classList.toggle("hidden", !from);
+}
+
+async function selectDays(from, to, setAnchor = true) {
+  S.cal.from = from;
+  S.cal.to = to;
+  if (setAnchor) S.cal.anchor = from;
+  paintCalendar();
+  S.index = 0;
+  await loadQueue();
+}
+
+/* the previous/next day (d = -1/+1) from the selected or current one that has events (left to do, in the to-do view) */
+function stepDay(d) {
+  const ref = S.cal.from ? (d > 0 ? S.cal.to : S.cal.from) : current() ? current().date : null;
+  const dates = Object.keys(S.days).filter((k) => (unlabeledView() ? left(S.days[k]) > 0 : S.days[k].n > 0)).sort();
+  if (!dates.length) return;
+  let pick;
+  if (!ref) pick = d > 0 ? dates[0] : dates[dates.length - 1];
+  else pick = d > 0 ? dates.find((k) => k > ref) : [...dates].reverse().find((k) => k < ref);
+  if (!pick) { toast(d > 0 ? "No later day with events left" : "No earlier day with events left"); return; }
+  selectDays(pick, pick);
+  const b = $(`#cal .day[data-date="${pick}"]`);
+  if (b) b.scrollIntoView({ block: "nearest" });
+}
+
+/* the day counts follow my decisions without asking the server */
+function countDecision(q, before, after) {
+  const c = q && S.days[q.date];
+  if (!c || before === after) return;
+  if (before === "label") c.labeled--; else if (before === "skip") c.skipped--;
+  if (after === "label") c.labeled++; else if (after === "skip") c.skipped++;
+  repaintDay(q.date);
+}
+
+function renderFilterSum() {
+  const parts = [];
+  FILTERS.forEach((f) => {
+    const el = $(`#f-${f}`), v = el.value.trim();
+    if (!v || f === "elev_mask" || f === "order") return;
+    if (f === "status" && v === "unlabeled") return;
+    parts.push(f === "min_s4" ? `S4 ≥ ${v}` : el.tagName === "SELECT" ? el.selectedOptions[0].textContent : v);
+  });
+  $("#filter-sum").textContent = parts.length ? `· ${parts.join(" · ")}` : "";
 }
 
 let summaryTimer = 0;
@@ -175,7 +313,9 @@ async function loadQueue(keepId = null) {
     markQueueItem(e.event_id);
   });
   if (!S.queue.length) {
-    showEmpty($("#f-status").value === "unlabeled" ? "Nothing left to label with these filters. Well done!" : "No events match these filters.");
+    showEmpty($("#f-status").value === "unlabeled"
+      ? (S.cal.from ? "Nothing left to label on these days. ] goes to the next day with events left." : "Nothing left to label with these filters. Well done!")
+      : "No events match these filters.");
     return;
   }
   const k = keepId ? S.queue.findIndex((e) => e.event_id === keepId) : -1;
@@ -265,6 +405,10 @@ function loadEvent() {
     api(`/api/event/${enc(id)}`).then((ev) => { if (current() && current().event_id === id) renderReviewer(ev); }).catch(() => {});
   }
   highlightQueue();
+  const was = $("#cal .day.cur");
+  if (was) paintDay(was);
+  const b = $(`#cal .day[data-date="${q.date}"]`);
+  if (b) { paintDay(b); if (!S.cal.from) b.scrollIntoView({ block: "nearest" }); }
   showTab(S.tab);
 }
 
@@ -859,6 +1003,7 @@ async function pumpSave() {
       S.decisions.delete(job.id);
       markQueueItem(job.id);
       toast(`Not saved (${job.id}): ${e.message}`, true);
+      loadDays().catch(() => {});
       renderSaveState();
     } else {
       job.tries = (job.tries || 0) + 1;
@@ -876,6 +1021,7 @@ function record(body, message) {
   const q = current();
   if (!q) return null;
   const id = q.event_id;
+  const before = (S.decisions.get(id) || {}).action;
   body = {
     ...body, notes: $("#notes").value, for_review: $("#for-review").checked,
     segments: body.action === "label" ? segs().filter((s) => s.label).map((s) => ({ start: s.start, end: s.end, label: s.label })) : [],
@@ -888,6 +1034,7 @@ function record(body, message) {
     S.history = S.history.filter((h) => h !== id).concat(id);
     S.drafts.set(id, body.segments.map((s) => ({ ...s })));
   }
+  countDecision(q, before, body.action === "clear" ? undefined : body.action);
   saveQ.push({ id, body });
   renderSaveState();
   pumpSave();
@@ -926,7 +1073,11 @@ function digit(n) {
 function advance() {
   const next = upcoming(S.index, 1)[0];
   if (next === undefined) {
-    if (unlabeledView()) { showEmpty("Nothing left to label with these filters. ← goes back."); return; }
+    if (unlabeledView()) {
+      showEmpty(S.cal.from ? "Nothing left to label on these days. ] goes to the next day with events left, ← goes back."
+        : "Nothing left to label with these filters. ← goes back.");
+      return;
+    }
     renderDecision();
     return;
   }
@@ -983,6 +1134,7 @@ async function saveSettings() {
   figs.clear();  // figures depend on the settings
   toast("Settings saved");
   summarySoon();
+  loadDays().catch(() => {});
   await loadQueue(current() && current().event_id);
 }
 
@@ -1009,8 +1161,11 @@ function bind() {
     document.activeElement.blur();
     S.index = 0;
     summarySoon();
+    renderFilterSum();
+    loadDays().catch((err) => toast(err.message, true));
     await loadQueue();
   });
+  $("#cal-all").addEventListener("click", () => selectDays(null, null));
   $("#prev").addEventListener("click", () => move(-1));
   $("#next").addEventListener("click", () => move(1));
   $("#skip").addEventListener("click", skip);
@@ -1050,6 +1205,8 @@ function bind() {
     else if (k === "n") $("#notes").focus();
     else if (k === "u") backToLast();
     else if (k === "q") toggleQueue();
+    else if (e.key === "]") stepDay(1);
+    else if (e.key === "[") stepDay(-1);
     else if (k === "?") $("#help").showModal();
     else if (e.key === "Escape") { if (!onEscape()) return; }
     else if ((e.key === "Delete" || e.key === "Backspace") && S.selSeg !== null) removeSeg(S.selSeg);
@@ -1066,14 +1223,16 @@ async function init() {
     S.settings = S.boot.settings;
     $("#user-name").textContent = S.boot.user + (S.boot.is_reviewer ? " (reviewer)" : "");
     fill("#f-receiver", S.boot.receivers);
-    fill("#f-date", S.boot.dates);
     fill("#f-constellation", S.boot.constellations);
     $("#pad").value = S.settings.pad_minutes;
     $("#f-elev_mask").value = S.settings.elevation_mask_deg;
     buildLabelButtons();
     buildTabs();
     bind();
+    buildCalendar();
+    renderFilterSum();
     loadSummary().catch((e) => toast(e.message, true));
+    await loadDays().catch((e) => toast(e.message, true));
     await loadQueue();
   } catch (e) {
     toast(e.message, true);

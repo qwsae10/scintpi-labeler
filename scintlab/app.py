@@ -52,21 +52,29 @@ def create_app() -> Flask:
         d["decision"] = mine
         return d
 
-    def filtered(args) -> pd.DataFrame:
+    def filtered(args, status: str | None = None, dates: bool = True) -> pd.DataFrame:
+        """Events matching the queue filters. ``status`` overrides the status filter; ``dates=False``
+        ignores the day selection (the calendar counts every day under the other filters)."""
         ev = state["events"]
         s = load_settings(store().user)
         mask = float(args.get("elev_mask") or s["elevation_mask_deg"])
         ev = ev[ev["max_elev"] >= mask]
-        for key, col in (("receiver", "receiver"), ("date", "date"), ("rx_type", "rx_type"),
+        for key, col in (("receiver", "receiver"), ("rx_type", "rx_type"),
                          ("constellation", "constellation"), ("day_reason", "day_reason")):
             if args.get(key):
                 ev = ev[ev[col] == args[key]]
+        if dates:  # one UTC day (date) or an inclusive range of them (date_from, date_to)
+            lo, hi = args.get("date_from") or args.get("date"), args.get("date_to") or args.get("date")
+            if lo:
+                ev = ev[ev["date"] >= lo]
+            if hi:
+                ev = ev[ev["date"] <= hi]
         if args.get("prn"):
             ev = ev[ev["prn"].str.upper() == args["prn"].strip().upper()]
         if args.get("min_s4"):
             ev = ev[ev["peak_s4"] >= float(args["min_s4"])]
         mine = store().mine
-        status = args.get("status", "unlabeled")
+        status = status or args.get("status", "unlabeled")
         decided = ev["event_id"].map(lambda e: mine.get(e, {}).get("action"))
         label = ev["event_id"].map(lambda e: mine.get(e, {}).get("label"))
         if status == "unlabeled":
@@ -125,7 +133,7 @@ def create_app() -> Flask:
         ev = filtered(request.args)
         # Everything the event header needs, and my decision, so moving to the next event needs
         # no request of its own.
-        cols = ["event_id", "receiver", "prn", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
+        cols = ["event_id", "receiver", "prn", "date", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
                 "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason"]
         cols = [c for c in cols if c in ev]
         mine = store().mine
@@ -135,6 +143,16 @@ def create_app() -> Flask:
             d["decision"] = mine.get(r["event_id"])
             items.append(d)
         return jsonify({"count": len(items), "events": items})
+
+    @app.get("/api/days")
+    def days():
+        """Per UTC day: events under the current filters (any status, any day) and how many I decided."""
+        ev = filtered(request.args, status="all", dates=False)
+        mine = store().mine
+        act = ev["event_id"].map(lambda e: mine.get(e, {}).get("action"))
+        g = pd.DataFrame({"date": ev["date"], "labeled": act.eq("label"), "skipped": act.eq("skip")})
+        g = g.groupby("date").agg(n=("labeled", "size"), labeled=("labeled", "sum"), skipped=("skipped", "sum"))
+        return jsonify({d: {k: int(v) for k, v in r.items()} for d, r in g.iterrows()})
 
     @app.get("/api/event/<event_id>")
     def event(event_id):
