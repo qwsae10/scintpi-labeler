@@ -131,6 +131,48 @@ and end, so labels stay attached as long as the candidate rule is unchanged.
 After rebuilding, press nothing: running apps reload on restart (or POST
 `/api/reload`).
 
+Consecutive processed days of a receiver are grouped together, so an event
+running over UTC midnight is one event (`crosses_midnight`). An event within a
+bridge gap of midnight whose neighbouring day is not processed is marked
+`cut_at_day_edge`: it may continue there unseen. (Indexes built before
+2026-11-16 cut every such event at midnight into two.)
+
+### Rebuild with data quality (one job)
+
+```bash
+sbatch -p rodrigues -c 8 --mem=40G -J audit code/cluster/audit_events.sbatch
+```
+
+`scintlab audit-events --install` (what the job runs) rebuilds the index with
+events joined over midnight, measures every event's 1 s data, installs both,
+and writes a report. Restart running `scintlab serve` processes afterwards.
+Add `--no-install` to the sbatch line to get only the report.
+
+Installed in `events/`:
+
+- `events.parquet`, the rebuilt index (the previous one is kept, dated).
+- `quality.parquet`, per event: `frac_snr1`, `frac_snr2`, `frac_tec` (share
+  of the event's seconds with L1 C/N₀, channel-2 C/N₀, TEC), `max_gap_s`,
+  `ends_in_loss_of_lock` and `starts_after_gap` (the satellite's data stops
+  or starts within 2 min of the edge, for 2 min, while ≥ 3 other satellites
+  are tracked and it is not setting). The app joins it to the index.
+- `id_map.csv`, old id → current id for events merged over midnight. Label
+  lines keep the id they were saved with; the app reads them through this
+  map, so a decision on half of a merged event shows on the merged event.
+  Maps of earlier rebuilds are carried forward.
+
+In `events/audit_<time>/`: `report.txt` (ids kept and merged, the labels on
+merged events, how many events have 1–3 candidate minutes, low coverage, long
+gaps, a second band, TEC or a loss of lock, and for a grid of rules how many
+events each leaves and what decisions the hidden ones have), `id_map.csv`,
+`labels_affected.csv`, `quality.parquet`, `events_rebuilt.parquet`.
+
+The queue's **Data quality** filters (minimum candidate minutes, L1 coverage,
+longest gap, loss of lock at the edge, 2nd band, TEC, cut at a day edge) use
+these columns; events not measured pass them. Their defaults are
+`queue_filters` in the config (2 minutes and 80 % L1 coverage); the progress
+bar counts only the events the data filters leave.
+
 ## 6. Progress and export
 
 ```bash

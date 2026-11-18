@@ -44,6 +44,23 @@ function purgePlots() {
   S.fig = null;
 }
 const FILTERS = ["status", "receiver", "constellation", "rx_type", "prn", "min_s4", "elev_mask", "order"];
+/* data-quality filters (events/quality.parquet); their defaults come from queue_filters in the config */
+const DQ = ["min_minutes", "min_snr1", "max_gap", "min_snr2", "min_tec", "lol", "hide_cut"];
+const DQ_CFG = { min_minutes: "min_minutes", min_snr1: "min_frac_snr1", max_gap: "max_gap_s", min_snr2: "min_frac_snr2",
+  min_tec: "min_frac_tec", lol: "loss_of_lock", hide_cut: "hide_cut" };
+const fval = (f) => { const el = $(`#f-${f}`); return el.type === "checkbox" ? (el.checked ? "1" : "") : el.value.trim(); };
+
+function setDqDefaults() {
+  const d = S.boot.queue_filters || {};
+  DQ.forEach((f) => {
+    const el = $(`#f-${f}`), v = d[DQ_CFG[f]];
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = v === null || v === undefined ? (f === "lol" ? "any" : "") : v;
+  });
+  // without events/quality.parquet only the candidate-minute filter can work
+  DQ.filter((f) => f !== "min_minutes").forEach((f) => { $(`#f-${f}`).disabled = !S.boot.has_quality; });
+  $("#dq-note").textContent = S.boot.has_quality ? "" : "(not measured yet: run scintlab audit-events --install)";
+}
 const TIME_TABS = new Set(["overview", "highrate", "satellites", "sidereal"]);
 const MIN = 60000;
 
@@ -136,9 +153,9 @@ function cycleTab(d) {
 
 function query() {
   const p = new URLSearchParams();
-  FILTERS.forEach((f) => {
-    const v = $(`#f-${f}`).value.trim();
-    if (v) p.set(f, v);
+  FILTERS.concat(DQ).forEach((f) => {
+    const v = fval(f);
+    if (v && !(f === "lol" && v === "any")) p.set(f, v);
   });
   if (S.cal.from) {
     p.set("date_from", S.cal.from);
@@ -282,14 +299,23 @@ function renderFilterSum() {
     if (f === "status" && v === "unlabeled") return;
     parts.push(f === "min_s4" ? `S4 ≥ ${v}` : el.tagName === "SELECT" ? el.selectedOptions[0].textContent : v);
   });
+  const q = Object.fromEntries(DQ.map((f) => [f, fval(f)]));
+  if (q.min_minutes) parts.push(`≥ ${q.min_minutes} min`);
+  if (q.min_snr1) parts.push(`L1 ≥ ${q.min_snr1}%`);
+  if (q.max_gap) parts.push(`gaps ≤ ${q.max_gap} s`);
+  if (q.min_snr2) parts.push(`2nd band ≥ ${q.min_snr2}%`);
+  if (q.min_tec) parts.push(`TEC ≥ ${q.min_tec}%`);
+  if (q.lol === "hide") parts.push("no loss of lock");
+  if (q.lol === "only") parts.push("loss of lock only");
+  if (q.hide_cut) parts.push("not cut");
   $("#filter-sum").textContent = parts.length ? `· ${parts.join(" · ")}` : "";
 }
 
 let summaryTimer = 0;
 const summarySoon = () => { clearTimeout(summaryTimer); summaryTimer = setTimeout(() => loadSummary().catch(() => {}), 400); };
 async function loadSummary() {
-  const p = new URLSearchParams();
-  if ($("#f-elev_mask").value) p.set("elev_mask", $("#f-elev_mask").value);
+  // progress counts the events the data filters leave, so "left" is what the queue can show
+  const p = new URLSearchParams([...query()].filter(([k]) => k === "elev_mask" || DQ.includes(k)));
   const s = await api(`/api/summary?${p}`);
   const done = s.labeled + s.skipped;
   const pct = s.total ? Math.round((100 * s.labeled) / s.total) : 0;
@@ -381,6 +407,16 @@ function homeWindow(q) {
   return [parseUTC(q.start_utc) - pad, parseUTC(q.end_utc) + pad];
 }
 
+/* coverage of the event's seconds and edge flags, from events/quality.parquet when it exists */
+function dataFacts(q) {
+  if (q.frac_snr1 === undefined || q.frac_snr1 === null) return [];
+  const pc = (v) => (v === null || v === undefined ? "–" : `${Math.round(100 * v)}%`);
+  const flags = [q.starts_after_gap && "starts after gap", q.ends_in_loss_of_lock && "lost lock at end",
+    q.cut_at_day_edge && "cut at day edge"].filter(Boolean);
+  return [["L1 · 2nd · TEC", `${pc(q.frac_snr1)} · ${pc(q.frac_snr2)} · ${pc(q.frac_tec)}`],
+    ["Longest gap", `${q.max_gap_s ?? "–"} s`]].concat(flags.length ? [["Data", flags.join(", ")]] : []);
+}
+
 function loadEvent() {
   const q = current();
   if (!q) return;
@@ -395,7 +431,7 @@ function loadEvent() {
     ["Peak S4", num(q.peak_s4)], ["Other freq", num(q.peak_s4_other)],
     ["Elevation", `${Math.round(q.min_elev)}–${Math.round(q.max_elev)}°`], ["Azimuth", `${Math.round(q.mean_azim)}°`],
     ["Type", q.rx_type.toUpperCase()], ["Day", q.day_reason || "–"],
-  ].map(([k, v]) => `<span><em>${k}</em>${v}</span>`).join("");
+  ].concat(dataFacts(q)).map(([k, v]) => `<span><em>${k}</em>${v}</span>`).join("");
   $("#ev-pos").textContent = `${S.index + 1} / ${S.queue.length}`;
   $("#prev").disabled = S.index === 0;
   $("#next").disabled = S.index >= S.queue.length - 1;
@@ -1252,6 +1288,7 @@ async function init() {
     fill("#f-constellation", S.boot.constellations);
     $("#pad").value = S.settings.pad_minutes;
     $("#f-elev_mask").value = S.settings.elevation_mask_deg;
+    setDqDefaults();
     buildLabelButtons();
     buildTabs();
     bind();

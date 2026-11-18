@@ -228,3 +228,111 @@ def test_snapshot_overlapping_windows_across_midnight(root):
     with zipfile.ZipFile(result["zip"]) as archive:
         assert archive.testzip() is None
         assert "demo/run_windows.bat" in archive.namelist()
+
+
+def _day_products(root, rx, date, minute, second=None, rx_type="sc3"):
+    day = root / "products" / rx / date.replace("-", "")
+    day.mkdir(parents=True)
+    minute.assign(azim=180.0).to_parquet(day / "minute.parquet")
+    if second is not None:
+        second.to_parquet(day / "second.parquet")
+    (day / "meta.json").write_text(json.dumps({"receiver": rx, "rx_type": rx_type, "date": date}))
+
+
+def _cand(times, prn):
+    t = pd.to_datetime(times)
+    return pd.DataFrame({"datetime": t, "prn": prn, "s4_1": 0.3, "elev": 30.0, "s4_quality_flag_1": 0})
+
+
+def test_events_join_over_midnight_and_mark_cut_ones(root):
+    from scintlab.events import build_events, events_for_day
+
+    _day_products(root, "TE-HO3", "2024-10-10", pd.concat([
+        _cand(["2024-10-10 23:57", "2024-10-10 23:58", "2024-10-10 23:59"], "G01"),
+        _cand(["2024-10-10 00:00", "2024-10-10 00:01"], "E11")]))  # 2024-10-09 is not processed
+    _day_products(root, "TE-HO3", "2024-10-11", _cand(["2024-10-11 00:00", "2024-10-11 00:01"], "G01"))
+    (root / "inventory").mkdir()
+    pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]}).to_csv(
+        root / "inventory" / "receivers.csv", index=False)
+    pd.DataFrame({"receiver": ["TE-HO3"] * 2, "date": ["2024-10-10", "2024-10-11"], "reason": ["storm"] * 2}).to_csv(
+        root / "days.csv", index=False)
+    ev = build_events(write=False).set_index("prn")
+    g = ev.loc["G01"]
+    assert g["n_minutes"] == 5 and g["crosses_midnight"] and not g["cut_at_day_edge"]
+    assert g["date"] == "2024-10-10" and str(g["end_utc"]) == "2024-10-11 00:02:00"
+    assert ev.loc["E11", "cut_at_day_edge"] and not ev.loc["E11", "crosses_midnight"]
+    # One day on its own still cuts the pass at midnight, and says so.
+    rx = pd.read_csv(root / "inventory" / "receivers.csv")
+    one = pd.DataFrame(events_for_day(root / "products" / "TE-HO3" / "20241010", config.load(), rx,
+                                      pd.read_csv(root / "days.csv", dtype={"date": str}))).set_index("prn")
+    assert one.loc["G01", "n_minutes"] == 3 and one.loc["G01", "cut_at_day_edge"]
+
+
+def test_audit_quality_finds_loss_of_lock_and_gaps(root):
+    from scintlab.audit import id_map, quality
+    from scintlab.events import build_events
+
+    t = pd.date_range("2024-10-10 01:50", "2024-10-10 02:20", freq="1s", inclusive="left")
+    sec = pd.concat([pd.DataFrame({"datetime": t, "prn": p, "elev": 40.0, "snr1": 45.0, "snr2": 40.0,
+                                   "tec_cph12": 10.0}) for p in ("G01", "G05", "G07", "G09")], ignore_index=True)
+    g01 = sec["prn"].eq("G01")
+    sec = sec[~(g01 & (sec["datetime"] >= "2024-10-10 02:03:30"))]          # G01 lost from 02:03:30 on
+    sec.loc[sec["prn"].eq("G01") & sec["datetime"].between("2024-10-10 02:01:00", "2024-10-10 02:01:39"),
+            "snr2"] = np.nan                                                # 40 s without channel 2
+    _day_products(root, "TE-HO3", "2024-10-10", _cand(["2024-10-10 02:00", "2024-10-10 02:01", "2024-10-10 02:02",
+                                                       "2024-10-10 02:03"], "G01"), second=sec)
+    (root / "inventory").mkdir()
+    pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]}).to_csv(
+        root / "inventory" / "receivers.csv", index=False)
+    pd.DataFrame({"receiver": ["TE-HO3"], "date": ["2024-10-10"], "reason": ["storm"]}).to_csv(
+        root / "days.csv", index=False)
+    ev = build_events(write=False)
+    q = quality(ev, config.load()).iloc[0]
+    assert q["frac_snr1"] == round(210 / 240, 4) and q["frac_snr2"] == round(170 / 240, 4)
+    assert q["max_gap_s"] == 30 and q["ends_in_loss_of_lock"] and not q["starts_after_gap"]
+    m = id_map(ev.assign(event_id="old", end_utc=ev["end_utc"] - pd.Timedelta(minutes=1)), ev)
+    assert m.iloc[0]["status"] == "merged" and m.iloc[0]["new_id"] == ev["event_id"].iloc[0]
+
+
+def test_audit_install_carries_labels_and_feeds_the_queue_filters(root, tmp_path):
+    from scintlab.app import create_app
+    from scintlab.audit import run
+    from scintlab.events import events_for_day, install_events
+    from scintlab.labels import LabelStore
+
+    t = pd.date_range("2024-10-10 23:40", "2024-10-11 00:20", freq="1s", inclusive="left")
+    sec = pd.concat([pd.DataFrame({"datetime": t, "prn": p, "elev": 40.0, "snr1": 45.0}) for p in ("G01", "E11")])
+    sec.loc[sec["prn"].eq("E11") & (sec["datetime"] >= "2024-10-11 00:05"), "snr1"] = np.nan  # E11: L1 half gone
+    day1, day2 = sec[sec["datetime"] < "2024-10-11"], sec[sec["datetime"] >= "2024-10-11"]
+    _day_products(root, "TE-HO3", "2024-10-10", _cand(["2024-10-10 23:58", "2024-10-10 23:59"], "G01"), second=day1)
+    _day_products(root, "TE-HO3", "2024-10-11", pd.concat([
+        _cand(["2024-10-11 00:00", "2024-10-11 00:01"], "G01"),
+        _cand([f"2024-10-11 00:{m:02d}" for m in range(4, 10)], "E11")]), second=day2)
+    (root / "inventory").mkdir()
+    rx = pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]})
+    rx.to_csv(root / "inventory" / "receivers.csv", index=False)
+    days = pd.DataFrame({"receiver": ["TE-HO3"] * 2, "date": ["2024-10-10", "2024-10-11"], "reason": ["storm"] * 2})
+    days.to_csv(root / "days.csv", index=False)
+    # the index as built before: each day on its own, so G01 is two events
+    old = pd.DataFrame(events_for_day(root / "products" / "TE-HO3" / "20241010", config.load(), rx, days)
+                       + events_for_day(root / "products" / "TE-HO3" / "20241011", config.load(), rx, days))
+    old["queue_rank"] = old["strat_rank"] = range(1, len(old) + 1)
+    install_events(old)
+    half = old[(old["prn"] == "G01") & (old["date"] == "2024-10-10")]["event_id"].iloc[0]
+    LabelStore().save(half, "label", label="Scintillation", confidence="High")
+
+    res = run(tmp_path / "audit", install=True)
+    assert "merged into 1 longer events: 2" in res["report"]
+    new = pd.read_parquet(config.events_path())
+    g01 = new[new["prn"] == "G01"]
+    assert len(g01) == 1 and g01["n_minutes"].iloc[0] == 4
+    assert LabelStore().mine[g01["event_id"].iloc[0]]["label"] == "Scintillation"  # followed the merge
+
+    c = create_app().test_client()
+    assert c.get("/api/bootstrap").json["has_quality"] is True
+    ids = lambda q: {e["prn"] for e in c.get(f"/api/queue?status=all&{q}").json["events"]}  # noqa: E731
+    assert ids("") == {"G01", "E11"}
+    assert ids("min_snr1=80") == {"G01"}           # E11 has L1 for 1 of its 6 minutes
+    assert ids("min_minutes=5") == {"E11"}
+    assert ids("max_gap=60") == {"G01"}
+    assert c.get("/api/summary?min_snr1=80").json["total"] == 1

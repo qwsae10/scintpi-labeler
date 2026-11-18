@@ -2,8 +2,10 @@
 
 Gaps of up to ``bridge_gap_minutes`` (5 by default) between candidate minutes
 of the same satellite are bridged, so one disturbance is one decision rather
-than many 1-minute fragments. ``n_minutes`` counts candidate minutes;
-``span_minutes`` is the full length; ``candidate_minutes`` lists them.
+than many 1-minute fragments. Consecutive processed days of a receiver are
+grouped together, so an event running over UTC midnight is one event.
+``n_minutes`` counts candidate minutes; ``span_minutes`` is the full length;
+``candidate_minutes`` lists them.
 
 A candidate minute has S4 above the threshold on the configured channel,
 elevation above ``min_elevation_deg`` (5 deg by default) and a good S4
@@ -35,20 +37,34 @@ def local_solar_hour(t: pd.Series, lon: float) -> pd.Series:
     return ((t.dt.hour + t.dt.minute / 60 + lon / 15.0) % 24).round(2)
 
 
-def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.DataFrame) -> list[dict]:
+def _day_candidates(day_dir: Path, cfg: dict) -> tuple[dict, pd.DataFrame]:
+    """meta.json and the candidate minutes of one processed receiver-day."""
     meta = json.loads((day_dir / "meta.json").read_text())
     minute = pd.read_parquet(day_dir / "minute.parquet")
     if minute.empty:
+        return meta, minute
+    return meta, minute.loc[candidate_mask(minute, cfg)]
+
+
+def _group_events(cand: pd.DataFrame, cfg: dict, rx_type: str, receiver: str, processed: set[str],
+                  receivers: pd.DataFrame, days: pd.DataFrame) -> list[dict]:
+    """Events from the candidate minutes of one receiver, which may span several consecutive days.
+
+    ``processed`` holds the UTC dates (YYYY-MM-DD) with products for this receiver; an event within
+    a bridge gap of midnight whose neighbouring day is not processed may continue there unseen, and
+    is marked ``cut_at_day_edge``.
+    """
+    if cand.empty:
         return []
     ch = int(cfg["candidates"]["s4_channel"])
     bridge = int(cfg["candidates"]["bridge_gap_minutes"])
-    cand = minute.loc[candidate_mask(minute, cfg)].sort_values(["prn", "datetime"])
-    rx = receivers.set_index("receiver").loc[meta["receiver"]] if meta["receiver"] in set(receivers["receiver"]) \
-        else None
+    reach = pd.Timedelta(minutes=bridge + 1)  # the farthest apart two joined candidate minutes can be
+    cand = cand.sort_values(["prn", "datetime"])
+    rx = receivers.set_index("receiver").loc[receiver] if receiver in set(receivers["receiver"]) else None
     lon = float(rx["longitude"]) if rx is not None else np.nan
     lat = float(rx["latitude"]) if rx is not None else np.nan
-    d = days[(days["receiver"] == meta["receiver"]) & (days["date"] == meta["date"])]
-    reason = d["reason"].iloc[0] if len(d) else ""
+    reasons = days[days["receiver"] == receiver].set_index("date")["reason"].to_dict()
+    day = lambda t: t.strftime("%Y-%m-%d")  # noqa: E731
     out = []
     for prn, g in cand.groupby("prn", sort=True):
         gap = g["datetime"].diff().dt.total_seconds().div(60)
@@ -56,11 +72,15 @@ def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.D
         for _, e in g.groupby(run):
             start = e["datetime"].iloc[0]
             end = e["datetime"].iloc[-1] + pd.Timedelta(minutes=1)
+            first_day, last_day = start.floor("D"), e["datetime"].iloc[-1].floor("D")
+            cut_before = start - reach < first_day and day(first_day - pd.Timedelta(days=1)) not in processed
+            cut_after = e["datetime"].iloc[-1] + reach >= last_day + pd.Timedelta(days=1) \
+                and day(last_day + pd.Timedelta(days=1)) not in processed
             s4b = f"s4_{3 - ch}" if ch in (1, 2) else None
             out.append({
-                "event_id": make_event_id(meta["receiver"], prn, start, end),
-                "receiver": meta["receiver"], "rx_type": meta["rx_type"], "date": meta["date"],
-                "day_reason": reason, "prn": prn, "constellation": prn[0],
+                "event_id": make_event_id(receiver, prn, start, end),
+                "receiver": receiver, "rx_type": rx_type, "date": day(start),
+                "day_reason": reasons.get(day(start), ""), "prn": prn, "constellation": prn[0],
                 "start_utc": start, "end_utc": end, "n_minutes": int(len(e)),
                 "span_minutes": int(round((end - start).total_seconds() / 60)),
                 # Candidate minutes only; bridged gaps inside the event are not candidates.
@@ -72,9 +92,42 @@ def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.D
                 "mean_azim": float(e["azim"].mean()),
                 "latitude": lat, "longitude": lon,
                 "local_hour": float(local_solar_hour(pd.Series([start]), lon).iloc[0]) if np.isfinite(lon) else np.nan,
-                "has_phase": bool(meta["rx_type"] != "sc2"),
+                "has_phase": bool(rx_type != "sc2"),
+                # Joined across UTC midnight (built from two days' products).
+                "crosses_midnight": bool(first_day != last_day),
+                "cut_at_day_edge": bool(cut_before or cut_after),
             })
     return out
+
+
+def events_for_day(day_dir: Path, cfg: dict, receivers: pd.DataFrame, days: pd.DataFrame) -> list[dict]:
+    """Events of one receiver-day on its own (events running over midnight are cut there)."""
+    meta, cand = _day_candidates(day_dir, cfg)
+    return _group_events(cand, cfg, meta["rx_type"], meta["receiver"], {meta["date"]}, receivers, days)
+
+
+def events_for_receiver(day_dirs: list[Path], cfg: dict, receivers: pd.DataFrame, days: pd.DataFrame) -> list[dict]:
+    """Events of one receiver over all its processed days. Candidate minutes of consecutive days are
+    grouped together, so an event running over UTC midnight is one event, not one per day."""
+    metas, cands = [], []
+    for d in sorted(day_dirs):
+        try:
+            meta, cand = _day_candidates(d, cfg)
+        except Exception:
+            logger.exception("could not read %s", d)
+            continue
+        metas.append(meta)
+        if len(cand):
+            cands.append(cand)
+    if not metas:
+        return []
+    rx_type = metas[-1]["rx_type"]
+    processed = {m["date"] for m in metas}
+    cand = pd.concat(cands, ignore_index=True) if cands else pd.DataFrame()
+    # A day file may repeat the last seconds of the previous day; one row per (prn, minute).
+    if len(cand):
+        cand = cand.drop_duplicates(["prn", "datetime"])
+    return _group_events(cand, cfg, rx_type, metas[-1]["receiver"], processed, receivers, days)
 
 
 S4_BINS = [0.2, 0.3, 0.5, np.inf]
@@ -99,31 +152,45 @@ def add_queue_order(ev: pd.DataFrame, seed: int) -> None:
         {k: i for i, k in enumerate(sorted(ev["stratum"].unique()))})).rank(method="first").astype(int)
 
 
-def build_events(cfg: dict | None = None) -> pd.DataFrame:
+def build_events(cfg: dict | None = None, write: bool = True) -> pd.DataFrame:
+    """Find the events in every processed receiver-day; with ``write``, install them as the event index
+    (the previous index is kept under a dated name)."""
     cfg = cfg or config.load()
     root = config.products_dir()
     receivers = pd.read_csv(config.data_root() / "inventory" / "receivers.csv")
     days = pd.read_csv(config.data_root() / "days.csv", dtype={"date": str})
-    rows = []
+    by_rx: dict[str, list[Path]] = {}
     for meta in sorted(root.glob("*/*/meta.json")):
-        try:
-            rows += events_for_day(meta.parent, cfg, receivers, days)
-        except Exception:
-            logger.exception("could not read %s", meta.parent)
+        by_rx.setdefault(meta.parent.parent.name, []).append(meta.parent)
+    rows = []
+    for rx, dirs in sorted(by_rx.items()):
+        rows += events_for_receiver(dirs, cfg, receivers, days)
     ev = pd.DataFrame(rows)
     if len(ev):
         add_queue_order(ev, int(cfg["sampling"]["seed"]))
+    if write:
+        install_events(ev)
+    return ev
+
+
+def install_events(ev: pd.DataFrame) -> Path:
+    """Make ``ev`` the event index the app reads; the previous index is kept under a dated name."""
     path = config.events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         # Keep old indexes: label files refer to event ids.
         path.rename(path.with_name(f"events_{pd.Timestamp.utcnow():%Y%m%dT%H%M%S}.parquet"))
     ev.to_parquet(path, index=False)
-    return ev
+    return path
 
 
 def load_events() -> pd.DataFrame:
+    """The installed event index, with the data-quality columns of ``scintlab audit-events``
+    (events/quality.parquet) when they exist; events without them have NaN there."""
     ev = pd.read_parquet(config.events_path())
     for c in ("start_utc", "end_utc"):
         ev[c] = pd.to_datetime(ev[c], utc=True)
+    q = config.events_path().with_name("quality.parquet")
+    if q.exists():
+        ev = ev.merge(pd.read_parquet(q), on="event_id", how="left")
     return ev

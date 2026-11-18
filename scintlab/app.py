@@ -53,6 +53,24 @@ def create_app() -> Flask:
         d["decision"] = mine
         return d
 
+    def quality_filtered(ev: pd.DataFrame, args) -> pd.DataFrame:
+        """The data filters of the queue. Percentages are 0-100; events not measured (NaN) pass."""
+        num = lambda k: float(args[k]) if args.get(k) not in (None, "") else None  # noqa: E731
+        if num("min_minutes") is not None:
+            ev = ev[ev["n_minutes"] >= num("min_minutes")]
+        for key, col in (("min_snr1", "frac_snr1"), ("min_snr2", "frac_snr2"), ("min_tec", "frac_tec")):
+            if num(key) is not None and col in ev:
+                ev = ev[~(ev[col] < num(key) / 100)]
+        if num("max_gap") is not None and "max_gap_s" in ev:
+            ev = ev[~(ev["max_gap_s"] > num("max_gap"))]
+        if args.get("hide_cut") and "cut_at_day_edge" in ev:
+            ev = ev[~ev["cut_at_day_edge"].fillna(False).astype(bool)]
+        lol = args.get("lol")
+        if lol in ("hide", "only") and "ends_in_loss_of_lock" in ev:
+            hit = ev["ends_in_loss_of_lock"].fillna(False).astype(bool) | ev["starts_after_gap"].fillna(False).astype(bool)
+            ev = ev[~hit] if lol == "hide" else ev[hit]
+        return ev
+
     def filtered(args, status: str | None = None, dates: bool = True) -> pd.DataFrame:
         """Events matching the queue filters. ``status`` overrides the status filter; ``dates=False``
         ignores the day selection (the calendar counts every day under the other filters)."""
@@ -60,6 +78,7 @@ def create_app() -> Flask:
         s = load_settings(store().user)
         mask = float(args.get("elev_mask") or s["elevation_mask_deg"])
         ev = ev[ev["max_elev"] >= mask]
+        ev = quality_filtered(ev, args)
         for key, col in (("receiver", "receiver"), ("rx_type", "rx_type"),
                          ("constellation", "constellation"), ("day_reason", "day_reason")):
             if args.get(key):
@@ -120,6 +139,8 @@ def create_app() -> Flask:
             "dates": sorted(ev["date"].unique().tolist()) if len(ev) else [],
             "constellations": sorted(ev["constellation"].unique().tolist()) if len(ev) else [],
             "s4_threshold": cfg["candidates"]["s4_threshold"],
+            "queue_filters": cfg.get("queue_filters", {}),
+            "has_quality": "frac_snr1" in ev,
         })
 
     @app.get("/api/summary")
@@ -127,7 +148,7 @@ def create_app() -> Flask:
         s = load_settings(store().user)
         ev = state["events"]
         ev = ev[ev["max_elev"] >= float(request.args.get("elev_mask") or s["elevation_mask_deg"])]
-        return jsonify(store().summary(ev))
+        return jsonify(store().summary(quality_filtered(ev, request.args)))
 
     @app.get("/api/queue")
     def queue():
@@ -135,7 +156,9 @@ def create_app() -> Flask:
         # Everything the event header needs, and my decision, so moving to the next event needs
         # no request of its own.
         cols = ["event_id", "receiver", "prn", "date", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
-                "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason"]
+                "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason",
+                "frac_snr1", "frac_snr2", "frac_tec", "max_gap_s", "ends_in_loss_of_lock", "starts_after_gap",
+                "cut_at_day_edge", "crosses_midnight"]
         cols = [c for c in cols if c in ev]
         mine = store().mine
         items = []

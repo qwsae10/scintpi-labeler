@@ -96,6 +96,17 @@ def cmd_build_events(args):
     print(f"{len(ev)} events from {ev['receiver'].nunique() if len(ev) else 0} receivers -> {config.events_path()}")
 
 
+def cmd_audit_events(args):
+    from pathlib import Path
+
+    from scintlab.audit import run
+
+    out = Path(args.out) if args.out else config.data_root() / "events" / f"audit_{pd.Timestamp.utcnow():%Y%m%d_%H%M}"
+    res = run(out, workers=args.workers, receivers=args.receiver or None, install=args.install)
+    print(res.pop("report"))
+    print(json.dumps(res, indent=2))
+
+
 def cmd_serve(args):
     from scintlab.app import create_app
 
@@ -160,6 +171,13 @@ def main(argv=None):
     s.add_argument("--overwrite", action="store_true")
     s.set_defaults(func=cmd_process)
     sub.add_parser("build-events", help="find candidate events in the products").set_defaults(func=cmd_build_events)
+    s = sub.add_parser("audit-events", help="rebuild events over midnight, measure data coverage, report rules")
+    s.add_argument("--out", help="output folder (default <data_root>/events/audit_<time>)")
+    s.add_argument("--workers", type=int, default=1, help="receivers measured in parallel")
+    s.add_argument("--receiver", action="append", help="limit to these receivers (repeatable)")
+    s.add_argument("--install", action="store_true",
+                   help="also make the rebuilt index the one the app reads (the old one is kept, dated)")
+    s.set_defaults(func=cmd_audit_events)
     s = sub.add_parser("serve", help="start the labeling app")
     s.add_argument("--host")
     s.add_argument("--port", type=int)

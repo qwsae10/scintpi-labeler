@@ -54,6 +54,18 @@ labels:
   # Users who see the Review queue and can set a final label.
   reviewers: [igw180000]
 
+# Defaults of the data filters in the queue; each labeler can change them there. All but
+# min_minutes need events/quality.parquet (scintlab audit-events --install); events not measured
+# pass them. Empty (null) = off.
+queue_filters:
+  min_minutes: 2            # candidate minutes in the event
+  min_frac_snr1: 80         # % of the event's seconds with L1 C/N0
+  max_gap_s: null           # longest L1 gap inside the event
+  min_frac_snr2: null       # % with channel-2 C/N0
+  min_frac_tec: null        # % with TEC
+  loss_of_lock: any         # any | hide | only (data stops or starts at the event's edge)
+  hide_cut: false           # hide events cut at the edge of the processed days
+
 display:
   # Tabs shown by default; each user can change these on the Settings page.
   tabs:

@@ -135,14 +135,21 @@ rules:
    with no phase. Small steady flicker between neighbouring integers (for
    example 39↔42 dB-Hz) is measurement noise. If that alone made S4 cross 0.2,
    choose Unsure/Artifact with High confidence.
-4. **Raise the elevation mask** in the queue filter (e.g. 20° or 30°) to work
+4. **Data quality filters** (under Filters) hide events with too little to
+   judge: by default fewer than 2 candidate minutes or less than 80 % of the
+   event's seconds with L1 data. You can also hide events whose data stops at
+   their edge (loss of lock), or ask for both frequencies or TEC. The header
+   shows each event's coverage (L1 · 2nd band · TEC) and longest gap. A loss of
+   lock during strong fading can itself be scintillation, so it is shown, not
+   hidden, by default.
+5. **Raise the elevation mask** in the queue filter (e.g. 20° or 30°) to work
    on clearer events first. Come back to the low ones later.
-5. **Part of the event is different?** Drag across the plot over that part and
+6. **Part of the event is different?** Drag across the plot over that part and
    press `1`–`4` for its class (`Esc` cancels). Click a marked range to select
    it: a number changes its class, `Delete` removes it, and its edges can be
    dragged. Ranges snap to whole minutes inside the shaded event and are saved
    with the event label, which then applies to the remaining minutes.
-6. **Not sure? Say so.** Unsure/Artifact with a note is a useful label. A
+7. **Not sure? Say so.** Unsure/Artifact with a note is a useful label. A
    wrong confident label damages the dataset.
 
 ## Working habits

@@ -53,6 +53,23 @@
           <select id="f-order"><option value="">Settings default</option><option value="stratified">Stratified random</option><option value="random">Random</option>
             <option value="chronological">By receiver and time</option><option value="peak_s4">Highest S4 first</option></select></label>
       </div>
+      <fieldset class="dq" id="dq">
+        <legend>Data quality <span class="muted small" id="dq-note"></span></legend>
+        <div class="two">
+          <label title="Minutes with S4 above the threshold">Min candidate minutes<input id="f-min_minutes" type="number" step="1" min="1" /></label>
+          <label title="Share of the event's seconds with L1 C/N₀">Min L1 coverage (%)<input id="f-min_snr1" type="number" step="5" min="0" max="100" /></label>
+        </div>
+        <div class="two">
+          <label title="Longest stretch inside the event without L1 C/N₀">Max gap (s)<input id="f-max_gap" type="number" step="10" min="0" /></label>
+          <label title="The satellite's data stops (or starts) at the event's edge while other satellites are tracked">Loss of lock at edge
+            <select id="f-lol"><option value="any">Any</option><option value="hide">Hide</option><option value="only">Only these</option></select></label>
+        </div>
+        <div class="two">
+          <label title="Share of the event's seconds with C/N₀ on the second frequency">Min 2nd band (%)<input id="f-min_snr2" type="number" step="5" min="0" max="100" /></label>
+          <label title="Share of the event's seconds with TEC">Min TEC (%)<input id="f-min_tec" type="number" step="5" min="0" max="100" /></label>
+        </div>
+        <label class="check"><input type="checkbox" id="f-hide_cut" /> Hide events cut at the edge of the processed days</label>
+      </fieldset>
       <button type="submit" class="btn wide">Apply</button>
     </form>
     </details>

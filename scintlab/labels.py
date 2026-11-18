@@ -22,6 +22,18 @@ import pandas as pd
 from scintlab import config
 
 
+def _aliases() -> dict[str, str]:
+    """Old event id -> current id, for events merged into a longer one when the index was rebuilt
+    (events/id_map.csv, written by ``scintlab audit-events --install``). Label lines keep the id they
+    were saved with; reading them through this map puts the decision on the event as it is now."""
+    path = config.events_path().with_name("id_map.csv")
+    if not path.exists():
+        return {}
+    m = pd.read_csv(path)
+    m = m[m["status"].eq("merged") & m["new_id"].notna()]
+    return dict(zip(m["old_id"], m["new_id"]))
+
+
 def _append(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     line = (json.dumps(record, default=str) + "\n").encode()
@@ -56,6 +68,8 @@ def _read(path: Path) -> list[dict]:
 
 
 class LabelStore:
+    alias: dict[str, str] = {}
+
     def __init__(self, user: str | None = None, cfg: dict | None = None):
         self.cfg = cfg or config.load()
         self.user = user or config.current_user()
@@ -64,6 +78,7 @@ class LabelStore:
         self.classes = list(self.cfg["labels"]["classes"])
         self.confidence = list(self.cfg["labels"]["confidence"])
         self.reviewers = set(self.cfg["labels"]["reviewers"])
+        LabelStore.alias = _aliases()
         self.mine: dict[str, dict] = {}
         for r in _read(self.path):
             self._apply(self.mine, r)
@@ -74,6 +89,8 @@ class LabelStore:
 
     @staticmethod
     def _apply(table: dict, r: dict) -> None:
+        if r.get("event_id") in LabelStore.alias:
+            r = {**r, "event_id": LabelStore.alias[r["event_id"]], "saved_as": r["event_id"]}
         if r.get("action") == "clear":
             table.pop(r["event_id"], None)
         elif r.get("action") in ("label", "skip"):
@@ -127,7 +144,8 @@ class LabelStore:
         for path in sorted(self.dir.glob("*.jsonl")):
             for r in _read(path):
                 if r.get("action") == "review":
-                    rows[r["event_id"]] = r
+                    eid = LabelStore.alias.get(r["event_id"], r["event_id"])
+                    rows[eid] = {**r, "event_id": eid}
         return pd.DataFrame(rows.values())
 
     def summary(self, events: pd.DataFrame) -> dict:
