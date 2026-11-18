@@ -7,6 +7,9 @@
 # Add --no-install to only write the report. Output: events/audit_<time>/report.txt and the files
 # beside it; installed: events/events.parquet (old one kept, dated), quality.parquet, id_map.csv.
 # Running labelers restart scintlab serve afterwards to see the new index.
+# Run (and write the log) in the project folder wherever sbatch is called from; Slurm opens the log
+# before the script starts, so a missing or unwritable logs/ fails the job with exit code 0:53 and no log.
+#SBATCH --chdir=/titan/frodrigues/scint_labeler
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --time=04:00:00
 set -euo pipefail

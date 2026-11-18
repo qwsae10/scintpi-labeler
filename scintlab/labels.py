@@ -201,11 +201,19 @@ def save_settings(settings: dict, user: str | None = None) -> dict:
 def export() -> dict:
     """Write ``exports/labels_<time>.{csv,parquet}`` (one row per event and labeler) and
     ``exports/minute_labels_<time>.parquet`` (one row per candidate minute, segment labels applied).
-    The final label is the reviewer's when there is one, else the labeler's."""
-    from scintlab.events import load_events
+    The final label is the reviewer's when there is one, else the labeler's.
+
+    Weights describe the *population* the queue offers by default: the events passing the
+    ``queue_filters`` of the config and the default elevation mask (``events.filter_events``), as
+    the labeled sample was drawn from it. ``in_population`` marks each row; rows outside it (labeled
+    with other filters) get no weight. ``labels_<time>_population.json`` records the rules and counts."""
+    from scintlab.events import filter_events, load_events
 
     store = LabelStore()
+    cfg = config.load()
     ev = load_events()
+    rules = {**cfg.get("queue_filters", {}), "elevation_mask_deg": cfg["display"]["elevation_mask_deg"]}
+    pop = filter_events(ev, rules)
     d = store.all_decisions()
     out_dir = config.data_root() / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -222,11 +230,19 @@ def export() -> dict:
         table["final_label"] = np.nan
         table["reviewer"] = np.nan
     table["final_label"] = table["final_label"].fillna(table["label"])
-    # Design weight per stratum: events in the stratum / events labeled in it (by this labeler).
+    # Design weight per stratum: population events in the stratum / events this labeler labeled in it.
+    table["in_population"] = table["event_id"].isin(pop["event_id"])
     if "stratum" in ev:
-        n_all = ev["stratum"].value_counts()
-        n_lab = table.groupby(["user", "stratum"])["event_id"].transform("count")
-        table["stratum_weight"] = table["stratum"].map(n_all) / n_lab
+        n_all = pop["stratum"].value_counts()
+        inside = table[table["in_population"]]
+        n_lab = inside.groupby(["user", "stratum"])["event_id"].transform("count")
+        table["stratum_weight"] = np.nan
+        table.loc[inside.index, "stratum_weight"] = inside["stratum"].map(n_all) / n_lab
+    (out_dir / f"labels_{stamp}_population.json").write_text(json.dumps({
+        "rules": rules, "events_in_index": int(len(ev)), "events_in_population": int(len(pop)),
+        "population_by_stratum": {k: int(v) for k, v in pop["stratum"].value_counts().items()} if "stratum" in pop else {},
+        "rows": int(len(table)), "rows_in_population": int(table["in_population"].sum()),
+    }, indent=2, default=str))
     table["segments"] = table["segments"].map(json.dumps)
     if "candidate_minutes" in table:
         table["candidate_minutes"] = table["candidate_minutes"].map(lambda v: list(v) if v is not None else [])
@@ -248,4 +264,5 @@ def export() -> dict:
     m = pd.concat(minutes, ignore_index=True)
     m.to_parquet(out_dir / f"minute_labels_{stamp}.parquet", index=False)
     return {"events": int(len(table)), "minutes": int(len(m)),
+            "in_population": int(table["in_population"].sum()), "population": int(len(pop)),
             "files": [str(out_dir / f"labels_{stamp}.csv"), str(out_dir / f"minute_labels_{stamp}.parquet")]}

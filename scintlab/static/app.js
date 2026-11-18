@@ -326,34 +326,86 @@ async function loadSummary() {
     + (S.boot.is_reviewer ? ` · <b>${s.review_queue}</b> awaiting review` : "");
 }
 
-async function loadQueue(keepId = null) {
-  const p = await api(`/api/queue?${query()}`);
-  S.queue = p.events;
-  const pending = new Set(saveQ.map((j) => j.id));
-  for (const e of S.queue) {  // the server's decision, unless a newer one of ours is still being written
-    if (pending.has(e.event_id)) continue;
-    if (e.decision) S.decisions.set(e.event_id, e.decision); else S.decisions.delete(e.event_id);
-  }
-  $("#queue-count").textContent = p.count.toLocaleString();
-  const list = $("#queue-list");
-  list.innerHTML = "";
-  S.queue.slice(0, 300).forEach((e, i) => {
-    const li = document.createElement("li");
+/* The queue comes in pages of PAGE events in queue order. Each event has a fixed position (_pos)
+   in that order, so the next page ("after the last position loaded") is right however many events
+   were labeled meanwhile. A page is fetched when you get within NEAR events of the end of what is
+   loaded, or scroll the list near its bottom. */
+const PAGE = 500, NEAR = 60;
+
+function addToList(events, start) {
+  const list = $("#queue-list"), frag = document.createDocumentFragment();
+  events.forEach((e, k) => {
+    const li = document.createElement("li"), i = start + k;
     li.dataset.id = e.event_id;
     li.innerHTML = `<span class="dot"></span><b>${e.receiver}</b> ${e.prn} <span class="muted">${e.start_utc.slice(0, 16).replace("T", " ")}</span> <span class="s4">${num(e.peak_s4)}</span>`;
     li.addEventListener("click", () => { S.index = i; loadEvent(); });
-    list.appendChild(li);
-    markQueueItem(e.event_id);
+    frag.appendChild(li);
   });
+  list.appendChild(frag);
+  events.forEach((e) => markQueueItem(e.event_id));
+}
+
+function takeDecisions(events) {
+  const pending = new Set(saveQ.map((j) => j.id));
+  for (const e of events) {  // the server's decision, unless a newer one of ours is still being written
+    if (pending.has(e.event_id)) continue;
+    if (e.decision) S.decisions.set(e.event_id, e.decision); else S.decisions.delete(e.event_id);
+  }
+}
+
+let queueSeq = 0, moreBusy = null;
+async function loadMore() {
+  if (S.more === null || S.more === undefined) return false;
+  if (moreBusy) return moreBusy;
+  const seq = queueSeq, p = query();
+  p.set("after", S.more);
+  p.set("limit", PAGE);
+  moreBusy = api(`/api/queue?${p}`).then((r) => {
+    if (seq !== queueSeq) return false;  // the filters changed meanwhile
+    const start = S.queue.length;
+    S.queue = S.queue.concat(r.events);
+    S.more = r.next;
+    takeDecisions(r.events);
+    addToList(r.events, start);
+    renderPos();
+    return r.events.length > 0;
+  }).finally(() => { moreBusy = null; });
+  return moreBusy;
+}
+const nearEnd = () => S.queue.length - S.index <= NEAR;
+
+async function loadQueue(keepId = null) {
+  const seq = ++queueSeq;
+  const p = query();
+  p.set("limit", PAGE);
+  const r = await api(`/api/queue?${p}`);
+  if (seq !== queueSeq) return;
+  S.queue = r.events;
+  S.total = r.count;
+  S.more = r.next;
+  takeDecisions(S.queue);
+  $("#queue-count").textContent = r.count.toLocaleString();
+  $("#queue-list").innerHTML = "";
+  addToList(S.queue, 0);
   if (!S.queue.length) {
     showEmpty($("#f-status").value === "unlabeled"
       ? (S.cal.from ? "Nothing left to label on these days. ] goes to the next day with events left." : "Nothing left to label with these filters. Well done!")
       : "No events match these filters.");
     return;
   }
-  const k = keepId ? S.queue.findIndex((e) => e.event_id === keepId) : -1;
+  // keep the event on screen (e.g. after Settings), loading pages until it is found
+  let k = keepId ? S.queue.findIndex((e) => e.event_id === keepId) : -1;
+  while (keepId && k < 0 && S.more !== null && S.queue.length < 20 * PAGE && (await loadMore())) {
+    k = S.queue.findIndex((e) => e.event_id === keepId);
+  }
   S.index = k >= 0 ? k : Math.min(S.index, S.queue.length - 1);
   loadEvent();
+}
+
+function renderPos() {
+  if (!current()) return;
+  $("#ev-pos").textContent = `${(S.index + 1).toLocaleString()} / ${(S.total ?? S.queue.length).toLocaleString()}`;
+  $("#next").disabled = S.index >= S.queue.length - 1 && S.more === null;
 }
 
 function markQueueItem(id) {
@@ -390,7 +442,7 @@ function showEmpty(text) {
   $("#ev-title").textContent = S.queue.length ? "All done here" : "No events match";
   $("#ev-time").textContent = "";
   $("#ev-facts").innerHTML = "";
-  $("#ev-pos").textContent = S.queue.length ? `${S.queue.length} / ${S.queue.length}` : "";
+  $("#ev-pos").textContent = S.queue.length ? `${S.queue.length.toLocaleString()} / ${(S.total ?? S.queue.length).toLocaleString()}` : "";
   $("#prev").disabled = !S.queue.length;
   $("#next").disabled = true;
   $("#saved-line").textContent = "";
@@ -432,9 +484,10 @@ function loadEvent() {
     ["Elevation", `${Math.round(q.min_elev)}–${Math.round(q.max_elev)}°`], ["Azimuth", `${Math.round(q.mean_azim)}°`],
     ["Type", q.rx_type.toUpperCase()], ["Day", q.day_reason || "–"],
   ].concat(dataFacts(q)).map(([k, v]) => `<span><em>${k}</em>${v}</span>`).join("");
-  $("#ev-pos").textContent = `${S.index + 1} / ${S.queue.length}`;
+  renderPos();
+  if (nearEnd()) loadMore().catch(() => {});
   $("#prev").disabled = S.index === 0;
-  $("#next").disabled = S.index >= S.queue.length - 1;
+
   const d = S.decisions.get(q.event_id) || {};
   if (!S.drafts.has(q.event_id)) S.drafts.set(q.event_id, (d.segments || []).map((s) => ({ ...s })));
   setConfidence(d.confidence || "High");
@@ -1132,8 +1185,9 @@ function digit(n) {
   else decide(label);
 }
 
-function advance() {
-  const next = upcoming(S.index, 1)[0];
+async function advance() {
+  let next = upcoming(S.index, 1)[0];
+  while (next === undefined && S.more !== null && (await loadMore())) next = upcoming(S.index, 1)[0];
   if (next === undefined) {
     if (unlabeledView()) {
       showEmpty(S.cal.from ? "Nothing left to label on these days. ] goes to the next day with events left, ← goes back."
@@ -1147,8 +1201,9 @@ function advance() {
   loadEvent();
 }
 
-function move(d) {
+async function move(d) {
   const i = S.index + d;
+  if (i >= S.queue.length && S.more !== null) await loadMore();
   if (i < 0 || i >= S.queue.length) return;
   S.index = i;
   loadEvent();
@@ -1228,6 +1283,10 @@ function bind() {
     await loadQueue();
   });
   $("#cal-all").addEventListener("click", () => selectDays(null, null));
+  $("#queue-list").addEventListener("scroll", (e) => {
+    const el = e.target;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) loadMore().catch(() => {});
+  }, { passive: true });
   $("#prev").addEventListener("click", () => move(-1));
   $("#next").addEventListener("click", () => move(1));
   $("#skip").addEventListener("click", skip);

@@ -184,6 +184,29 @@ def install_events(ev: pd.DataFrame) -> Path:
     return path
 
 
+def filter_events(ev: pd.DataFrame, rules: dict) -> pd.DataFrame:
+    """Events passing the data rules, named as in ``queue_filters`` of the config (percentages 0-100;
+    None or "" = off) plus ``elevation_mask_deg`` (on the event's highest elevation). The queue and
+    the export use the same rules. Events whose quality was not measured (NaN) pass."""
+    val = lambda k: None if rules.get(k) in (None, "") else rules[k]  # noqa: E731
+    if val("elevation_mask_deg") is not None:
+        ev = ev[ev["max_elev"] >= float(val("elevation_mask_deg"))]
+    if val("min_minutes") is not None:
+        ev = ev[ev["n_minutes"] >= float(val("min_minutes"))]
+    for key, col in (("min_frac_snr1", "frac_snr1"), ("min_frac_snr2", "frac_snr2"), ("min_frac_tec", "frac_tec")):
+        if val(key) is not None and col in ev:
+            ev = ev[~(ev[col] < float(val(key)) / 100)]
+    if val("max_gap_s") is not None and "max_gap_s" in ev:
+        ev = ev[~(ev["max_gap_s"] > float(val("max_gap_s")))]
+    if val("hide_cut") and str(val("hide_cut")).lower() not in ("0", "false") and "cut_at_day_edge" in ev:
+        ev = ev[~ev["cut_at_day_edge"].fillna(False).astype(bool)]
+    lol = val("loss_of_lock")
+    if lol in ("hide", "only") and "ends_in_loss_of_lock" in ev:
+        hit = ev["ends_in_loss_of_lock"].fillna(False).astype(bool) | ev["starts_after_gap"].fillna(False).astype(bool)
+        ev = ev[~hit] if lol == "hide" else ev[hit]
+    return ev
+
+
 def load_events() -> pd.DataFrame:
     """The installed event index, with the data-quality columns of ``scintlab audit-events``
     (events/quality.parquet) when they exist; events without them have NaN there."""

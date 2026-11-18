@@ -12,7 +12,7 @@ from flask import Flask, jsonify, render_template, request
 from plotly.utils import PlotlyJSONEncoder
 
 from scintlab import __version__, config, figures
-from scintlab.events import load_events
+from scintlab.events import filter_events, load_events
 from scintlab.labels import LabelStore, load_settings, save_settings
 
 logger = logging.getLogger(__name__)
@@ -53,23 +53,12 @@ def create_app() -> Flask:
         d["decision"] = mine
         return d
 
+    # URL parameters of the queue's data filters -> rule names of events.filter_events / the config
+    DQ_ARGS = {"min_minutes": "min_minutes", "min_snr1": "min_frac_snr1", "max_gap": "max_gap_s",
+               "min_snr2": "min_frac_snr2", "min_tec": "min_frac_tec", "lol": "loss_of_lock", "hide_cut": "hide_cut"}
+
     def quality_filtered(ev: pd.DataFrame, args) -> pd.DataFrame:
-        """The data filters of the queue. Percentages are 0-100; events not measured (NaN) pass."""
-        num = lambda k: float(args[k]) if args.get(k) not in (None, "") else None  # noqa: E731
-        if num("min_minutes") is not None:
-            ev = ev[ev["n_minutes"] >= num("min_minutes")]
-        for key, col in (("min_snr1", "frac_snr1"), ("min_snr2", "frac_snr2"), ("min_tec", "frac_tec")):
-            if num(key) is not None and col in ev:
-                ev = ev[~(ev[col] < num(key) / 100)]
-        if num("max_gap") is not None and "max_gap_s" in ev:
-            ev = ev[~(ev["max_gap_s"] > num("max_gap"))]
-        if args.get("hide_cut") and "cut_at_day_edge" in ev:
-            ev = ev[~ev["cut_at_day_edge"].fillna(False).astype(bool)]
-        lol = args.get("lol")
-        if lol in ("hide", "only") and "ends_in_loss_of_lock" in ev:
-            hit = ev["ends_in_loss_of_lock"].fillna(False).astype(bool) | ev["starts_after_gap"].fillna(False).astype(bool)
-            ev = ev[~hit] if lol == "hide" else ev[hit]
-        return ev
+        return filter_events(ev, {rule: args.get(arg) for arg, rule in DQ_ARGS.items()})
 
     def filtered(args, status: str | None = None, dates: bool = True) -> pd.DataFrame:
         """Events matching the queue filters. ``status`` overrides the status filter; ``dates=False``
@@ -93,6 +82,18 @@ def create_app() -> Flask:
             ev = ev[ev["prn"].str.upper() == args["prn"].strip().upper()]
         if args.get("min_s4"):
             ev = ev[ev["peak_s4"] >= float(args["min_s4"])]
+        # Order first, then number the events (_pos): the status filter only drops events, so each
+        # one keeps its place while labels change, and the queue can be fetched in pages by position.
+        order = args.get("order") or s["queue_order"]
+        if order == "chronological":
+            ev = ev.sort_values(["receiver", "start_utc", "prn"])
+        elif order == "peak_s4":
+            ev = ev.sort_values(["peak_s4", "event_id"], ascending=[False, True])
+        elif order == "stratified" and "strat_rank" in ev:
+            ev = ev.sort_values("strat_rank")
+        else:
+            ev = ev.sort_values("queue_rank")
+        ev = ev.assign(_pos=np.arange(len(ev)))
         mine = store().mine
         status = status or args.get("status", "unlabeled")
         decided = ev["event_id"].map(lambda e: mine.get(e, {}).get("action"))
@@ -112,15 +113,6 @@ def create_app() -> Flask:
             ev = ev[ev["event_id"].isin(flagged - done)]
         elif status in cfg["labels"]["classes"]:
             ev = ev[label.eq(status)]
-        order = args.get("order") or s["queue_order"]
-        if order == "chronological":
-            ev = ev.sort_values(["receiver", "start_utc", "prn"])
-        elif order == "peak_s4":
-            ev = ev.sort_values("peak_s4", ascending=False)
-        elif order == "stratified" and "strat_rank" in ev:
-            ev = ev.sort_values("strat_rank")
-        else:
-            ev = ev.sort_values("queue_rank")
         return ev
 
     @app.get("/")
@@ -152,21 +144,28 @@ def create_app() -> Flask:
 
     @app.get("/api/queue")
     def queue():
+        """One page of the queue: up to ``limit`` events after position ``after`` (-1 = from the
+        start), ``count`` = all events matching, ``next`` = the position to ask for next (None at the end)."""
         ev = filtered(request.args)
+        count = len(ev)
+        after = int(request.args.get("after", -1))
+        limit = max(1, min(int(request.args.get("limit", 500)), 5000))
+        ev = ev[ev["_pos"] > after].head(limit)
         # Everything the event header needs, and my decision, so moving to the next event needs
         # no request of its own.
         cols = ["event_id", "receiver", "prn", "date", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
                 "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason",
                 "frac_snr1", "frac_snr2", "frac_tec", "max_gap_s", "ends_in_loss_of_lock", "starts_after_gap",
                 "cut_at_day_edge", "crosses_midnight"]
-        cols = [c for c in cols if c in ev]
+        cols = [c for c in cols if c in ev] + ["_pos"]
         mine = store().mine
         items = []
         for r in ev[cols].to_dict("records"):
             d = {k: _clean(v) for k, v in r.items()}
             d["decision"] = mine.get(r["event_id"])
             items.append(d)
-        return jsonify({"count": len(items), "events": items})
+        nxt = int(ev["_pos"].iloc[-1]) if len(ev) == limit else None
+        return jsonify({"count": count, "events": items, "next": nxt})
 
     @app.get("/api/days")
     def days():

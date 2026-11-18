@@ -336,3 +336,55 @@ def test_audit_install_carries_labels_and_feeds_the_queue_filters(root, tmp_path
     assert ids("min_minutes=5") == {"E11"}
     assert ids("max_gap=60") == {"G01"}
     assert c.get("/api/summary?min_snr1=80").json["total"] == 1
+
+
+def _many_events(root, n_two=8, n_one=2):
+    """n_two events of 2 candidate minutes and n_one of 1 minute, one per satellite, on one day."""
+    m = pd.concat([_cand(["2024-10-10 02:00", "2024-10-10 02:01"], f"G{k:02d}") for k in range(1, n_two + 1)]
+                  + [_cand(["2024-10-10 03:00"], f"E{k:02d}") for k in range(1, n_one + 1)])
+    _day_products(root, "TE-HO3", "2024-10-10", m)
+    (root / "inventory").mkdir()
+    pd.DataFrame({"receiver": ["TE-HO3"], "latitude": [14.09], "longitude": [-87.16]}).to_csv(
+        root / "inventory" / "receivers.csv", index=False)
+    pd.DataFrame({"receiver": ["TE-HO3"], "date": ["2024-10-10"], "reason": ["storm"]}).to_csv(
+        root / "days.csv", index=False)
+
+
+def test_queue_pages_skip_nothing_while_labeling(root):
+    from scintlab.app import create_app
+    from scintlab.events import build_events
+
+    _many_events(root, n_two=10, n_one=0)
+    build_events()
+    c = create_app().test_client()
+    every = [e["event_id"] for e in c.get("/api/queue?limit=100").json["events"]]
+    first = c.get("/api/queue?limit=4").json
+    assert first["count"] == 10 and len(first["events"]) == 4 and first["next"] is not None
+    for e in first["events"][:3]:  # label while the rest is not loaded yet
+        c.post(f"/api/event/{e['event_id']}/label", json={"action": "label", "label": "RFI", "confidence": "High"})
+    seen = [e["event_id"] for e in first["events"]]
+    after = first["next"]
+    while after is not None:
+        page = c.get(f"/api/queue?limit=4&after={after}").json
+        seen += [e["event_id"] for e in page["events"]]
+        after = page["next"]
+    assert seen == every  # in order, none skipped, none twice
+
+
+def test_export_weights_cover_the_default_population(root):
+    from scintlab.app import create_app
+    from scintlab.events import build_events
+    from scintlab.labels import export
+
+    _many_events(root, n_two=4, n_one=2)
+    build_events()
+    c = create_app().test_client()
+    ev = c.get("/api/queue?status=all&limit=100").json["events"]
+    for e in ev:
+        c.post(f"/api/event/{e['event_id']}/label", json={"action": "label", "label": "Multipath", "confidence": "High"})
+    res = export()
+    assert res["population"] == 4 and res["in_population"] == 4  # 1-minute events are outside the defaults
+    t = pd.read_parquet(next((root / "exports").glob("labels_*.parquet")))
+    inside = t[t["in_population"]]
+    assert t.loc[~t["in_population"], "stratum_weight"].isna().all()
+    assert np.isclose(inside["stratum_weight"].sum(), 4)  # the weights add up to the population

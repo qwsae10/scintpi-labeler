@@ -185,6 +185,16 @@ label when there is one, otherwise the labeler's. The minute table expands
 every event into minutes and applies segment labels, for scoring a
 per-minute classifier.
 
+`stratum_weight` describes the **population the queue offers by default**:
+the events passing `queue_filters` in the config and the default elevation
+mask (`display.elevation_mask_deg`), because that is what the labeled sample
+is drawn from. Within it, weight = population events in the stratum ÷ events
+the labeler labeled in it, so the weights of a labeler add up to the
+population. `in_population` marks each row; rows labeled outside it (with
+other filters) get no weight. `labels_<time>_population.json` records the
+rules and the counts. Change `queue_filters` and the population changes with
+it, so keep the config fixed while a labeled set is being built.
+
 ## Configuration
 
 `scintlab/default_config.yaml` holds every threshold. Override keys in
