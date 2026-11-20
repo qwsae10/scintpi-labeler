@@ -178,9 +178,10 @@ def _layout(fig, height, start, end, t0, t1, rows, title_rows=None):
         fig.add_vrect(x0=start, x1=end, fillcolor=SHADE, opacity=0.16, line_width=0, row=r, col=1)
     fig.update_xaxes(range=[t0, t1], showgrid=True, gridcolor=GRID, matches="x")
     fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False)
-    fig.update_xaxes(title_text="Time (UTC)", row=rows, col=1)
+    # No "Time (UTC)" axis title (the header gives the event in UTC) and slim top/bottom margins:
+    # the app fits figures to the screen, and every pixel here is taken from the panels.
     fig.update_layout(
-        height=height, margin={"l": 70, "r": 60, "t": 50, "b": 45}, paper_bgcolor="white", plot_bgcolor="white",
+        height=height, margin={"l": 70, "r": 60, "t": 34, "b": 26}, paper_bgcolor="white", plot_bgcolor="white",
         font={"family": "Inter, system-ui, sans-serif", "size": 12}, hovermode="x unified", uirevision="keep",
     )
     # One legend per panel, right-aligned on the panel's title line.
@@ -435,7 +436,7 @@ def sidereal(event: dict, settings: dict) -> dict:
         if "s4_1" in om:
             _line(fig, om["datetime"] - dt, om["s4_1"], label, 2, color, mode="lines+markers", gl=False, show=False)
         _line(fig, o["datetime"] - dt, o["elev"], label, 3, color, show=False)
-    fig.add_annotation(text="<br>".join(notes), xref="paper", yref="paper", x=1, y=1.0, yshift=24,
+    fig.add_annotation(text="<br>".join(notes), xref="paper", yref="paper", x=1, y=1.0, yshift=20,
                        xanchor="right", yanchor="bottom", showarrow=False, align="right",
                        font={"size": 11, "color": "#475467"})
     shared = shared_ranges(event, settings)
@@ -443,7 +444,7 @@ def sidereal(event: dict, settings: dict) -> dict:
     fig.update_yaxes(title_text="S4", range=shared["s4"], rangemode="tozero", row=2, col=1)
     fig.update_yaxes(title_text="Elev (°)", range=shared["elev"], row=3, col=1)
     out = _layout(fig, 840, start, end, t0, t1, 3)
-    out["layout"]["margin"]["t"] = 110
+    out["layout"]["margin"]["t"] = 64  # the two repeat notes (2 × ~14 px) sit above the legend (~20 px)
     out = _tag(out, fig, {1: "cn0", 2: "s4", 3: "elev"})
     out["layout"]["meta"]["repeat"] = found  # the app bolds the tab's name when a repeat was found
     return out

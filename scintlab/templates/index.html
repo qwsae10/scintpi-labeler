@@ -99,17 +99,18 @@
       </div>
     </header>
 
-    <nav class="tabs" id="tabs"></nav>
-    <div class="tab-tools" id="tab-tools">
-      <label>Window ± <input id="pad" type="number" min="1" max="30" step="1" /> min</label>
-      <label id="sky-hours-wrap" class="hidden">Sky map span
-        <select id="sky-hours"><option value="">Whole day</option><option value="1">±1 h</option>
-          <option value="3">±3 h</option><option value="6">±6 h</option></select></label>
-      <span class="muted small" id="gesture-hint">Swipe sideways to pan · pinch or ⌘-scroll to zoom · ⇧-scroll moves a
-        panel up/down, ⌘⇧-scroll stretches it · drag to mark a range · double-click or <kbd>0</kbd> resets.
-        Shaded band = high-S4 minutes.</span>
-      <span class="near-line hidden" id="near-line"></span>
+    <!-- tabs and their tools share one line; the gesture help is a tooltip (and in Help, ?) -->
+    <div class="tabbar">
+      <nav class="tabs" id="tabs"></nav>
+      <div class="tab-tools" id="tab-tools">
+        <label>Window ± <input id="pad" type="number" min="1" max="30" step="1" /> min</label>
+        <label id="sky-hours-wrap" class="hidden">Sky map span
+          <select id="sky-hours"><option value="">Whole day</option><option value="1">±1 h</option>
+            <option value="3">±3 h</option><option value="6">±6 h</option></select></label>
+        <span class="muted small gesture" id="gesture-hint" title="Swipe sideways to pan · pinch or ⌘-scroll to zoom · ⇧-scroll moves a panel up/down, ⌘⇧-scroll stretches it · drag to mark a range · double-click or 0 resets. Shaded band = high-S4 minutes. V: fit to screen / full height.">Gestures ⓘ</span>
+      </div>
     </div>
+    <div class="near-line hidden" id="near-line"></div>
     <section class="plot-card">
       <div class="plot-msg hidden" id="plot-msg"></div>
       <div class="spinner hidden" id="spinner">Loading…</div>
@@ -123,18 +124,22 @@
     </section>
 
     <section class="label-panel" id="label-panel">
+      <div class="label-line">
       <div class="label-row" id="label-buttons"></div>
       <div class="label-row options">
         <div class="seg-toggle" role="group" aria-label="Confidence">
-          <span class="muted">Confidence</span>
+          <span class="muted small">Confidence</span>
           <button type="button" class="chip" data-conf="High">High <kbd>H</kbd></button>
           <button type="button" class="chip" data-conf="Low">Low <kbd>L</kbd></button>
         </div>
-        <label class="check"><input type="checkbox" id="for-review" /> Save for reviewer <kbd>R</kbd></label>
-        <button type="button" class="btn ghost" id="skip">Skip for now <kbd>S</kbd></button>
+        <label class="check"><input type="checkbox" id="for-review" /> For reviewer <kbd>R</kbd></label>
+        <button type="button" class="btn ghost" id="skip">Skip <kbd>S</kbd></button>
         <input id="notes" class="notes" placeholder="Notes (optional): what made you decide?" />
         <button type="button" class="btn ghost" id="clear" title="Remove my decision for this event">Clear</button>
       </div>
+      </div>
+      <div class="label-foot">
+      <p class="muted small" id="saved-line"></p>
       <details class="segments" id="segments-box">
         <summary>Part of the event looks different? Label a time range <span class="muted" id="seg-count"></span></summary>
         <p class="muted small">Drag across the plot over the part you mean, then press <kbd>1</kbd>–<kbd>4</kbd> for
@@ -145,7 +150,7 @@
           of the queue as an event of its own. Dashed bands are other events of this satellite.</p>
         <ul id="seg-list"></ul>
       </details>
-      <p class="muted small" id="saved-line"></p>
+      </div>
     </section>
   </main>
 </div>
@@ -201,6 +206,7 @@
       <kbd>⌘Z</kbd> undo the last label, skip or clear</p>
     <p><kbd>Tab</kbd>/<kbd>⇧Tab</kbd> next/previous tab · <kbd>`</kbd> the tab you were on before ·
       <kbd>⇧1</kbd>… a tab directly · <kbd>0</kbd> reset the zoom · <kbd>T</kbd> TEC panel to its mean over the event ±5 TECU (again: back) ·
+      <kbd>V</kbd> fit the figure to the screen / full height ·
       <kbd>Q</kbd> show/hide queue · <kbd>F</kbd> show/hide filters ·
       <kbd>[</kbd>/<kbd>]</kbd> previous/next day with events left · <kbd>?</kbd> this help</p>
     <h3>Calendar</h3>

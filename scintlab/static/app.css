@@ -142,3 +142,35 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; }
   .shell { grid-template-columns: 1fr; }
   .queue { position: static; height: auto; max-height: 50vh; overflow-y: auto; }
 }
+
+/* ---- compact chrome: the figures get the height (fidelity of the panels comes first) ---- */
+.main { padding: 6px 12px 10px; gap: 6px; }
+.top { gap: 10px; row-gap: 2px; }
+.top .btn { padding: 2px 8px; }
+.event-title { flex-direction: row; align-items: baseline; gap: 8px; }
+.event-title strong { font-size: 15px; white-space: nowrap; }
+.event-title span { font-size: 12px; white-space: nowrap; }
+/* facts read "Peak S4 0.42" on one line instead of a name above a value */
+.facts { gap: 4px 12px; font-size: 12px; }
+.facts span { flex-direction: row; align-items: baseline; gap: 4px; white-space: nowrap; }
+.tabbar { display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabbar .tabs { border-bottom: 0; flex: 1 1 auto; }
+.tab { padding: 5px 10px; }
+.tabbar .tab-tools { padding-bottom: 4px; gap: 12px; flex-wrap: nowrap; }
+.tab-tools input { padding: 2px 5px; }
+.gesture { cursor: help; white-space: nowrap; }
+.near-line { font-size: 12px; margin-top: -2px; }
+.plot-card { padding: 4px; }
+.label-panel { padding: 5px 10px; }
+.label-line { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.label-line .label-row { margin-bottom: 0; flex-wrap: nowrap; }
+#label-buttons { flex: 1 1 380px; gap: 6px; }
+.label-line .options { flex: 1 1 auto; gap: 10px; font-size: 13px; }
+.label-btn { min-width: 0; padding: 4px 6px; font-size: 13px; white-space: nowrap; }
+.label-line .options .btn { padding: 3px 8px; }
+.label-line .chip { padding: 1px 8px; }
+.notes { min-width: 120px; padding: 3px 6px; }
+.label-foot { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-top: 3px; }
+.label-foot #saved-line { margin: 0; white-space: nowrap; }
+.label-foot .segments { flex: 1; }
+.segments summary { font-size: 12px; color: var(--muted); }

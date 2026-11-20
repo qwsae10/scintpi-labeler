@@ -685,6 +685,8 @@ async function showTab(tab) {
     S.fig = { tab, time: false, meta: {} };
     if (S.skyId !== figId(res.figure)) {
       delete res.figure.layout.uirevision;
+      res.figure.layout.height = fitHeight(res.figure, sky);
+      S.skySrc = res.figure;
       await Plotly.react(sky, res.figure.data, res.figure.layout, PLOT_CONFIG);
       S.skyId = figId(res.figure);
       sky._shownW = sky.clientWidth;
@@ -694,6 +696,8 @@ async function showTab(tab) {
     if (S.main && S.main.sig === mainSig(res.figure, tab)) S.fig = S.main.state;  // still drawn
     else await render(res.figure, tab);
   }
+  if (seq !== showSeq) return;
+  await refit();  // drawn before the window or the panels below changed size (or kept from before)
   if (seq !== showSeq) return;
   logTiming(id, tab, began);
   if (!S.openedAt) S.openedAt = Date.now();
@@ -722,7 +726,7 @@ const yKey = (tab, ax, meta) => (meta && meta.yq && meta.yq[ax] ? `q:${meta.yq[a
 
 /* Only the points within one view-width either side of the view are drawn (as the dashboard
    does): zoomed in on a 40-minute figure, a redraw then handles a few thousand points instead of
-   all of them. Long time-x traces get their times parsed once per figure (fig.t). */
+   all of them. Long time-x traces get their times parsed once per figure (fig.t), on first draw. */
 const SLICE_MIN = 1500;
 function traceTimes(fig) {
   if (!fig.t) {
@@ -740,17 +744,54 @@ function sliceRange() {
   const [a, b] = S.view, [h0, h1] = S.home, span = b - a;
   return span >= (h1 - h0) * 0.98 ? null : [a - span, b + span];
 }
+/* And no more than a pixel column can show: a trace with more than two points per column is drawn
+   as the lowest and highest sample of each (real samples, in time order, so fades keep their depth;
+   a gap inside a column keeps its break). The Other satellites tab sends ten satellites' C/N0 at
+   1 s, ~30k points, which Plotly parsed and drew in full at every draw; this way it draws ~2 per
+   pixel per trace, and zooming in (commitView) draws again at the finer scale, back to every sample.
+   Returns {data, reduced}: reduced = some trace was thinned (at the current view's scale). */
+function envelopeIdx(t, y, i0, i1, r0, r1, nb) {
+  const keep = [], w = (r1 - r0) / nb;
+  let cur = NaN, lo = -1, hi = -1, gap = -1;
+  const flush = () => {
+    const k = [lo, hi, gap].filter((i) => i >= 0).sort((a, b) => a - b);
+    k.forEach((i, j) => { if (j === 0 || i !== k[j - 1]) keep.push(i); });
+  };
+  for (let i = i0; i < i1; i++) {
+    const b = Math.floor((t[i] - r0) / w);
+    if (b !== cur) { flush(); cur = b; lo = hi = gap = -1; }
+    const v = y[i];
+    if (v === null || v === undefined || Number.isNaN(v)) { if (gap < 0) gap = i; continue; }
+    if (lo < 0 || v < y[lo]) lo = i;
+    if (hi < 0 || v > y[hi]) hi = i;
+  }
+  flush();
+  return keep;
+}
 function dataFor(fig, range) {
-  if (!range) return fig.data;
-  const ts = traceTimes(fig);
-  return fig.data.map((tr, k) => {
+  const ts = traceTimes(fig), [r0, r1] = range || S.home, span = S.view[1] - S.view[0];
+  const xa = gd._fullLayout && gd._fullLayout.xaxis;
+  const px = (xa && xa._length) || gd.clientWidth || 1200;
+  const nb = Math.max(100, Math.round(px * (r1 - r0) / span));  // pixel columns across what is drawn
+  let reduced = false;
+  const data = fig.data.map((tr, k) => {
     const t = ts[k];
-    if (!t) return tr;
-    const i0 = Math.max(0, lowerBound(t, range[0]) - 1), i1 = Math.min(t.length, lowerBound(t, range[1]) + 1);
-    const out = { ...tr, x: tr.x.slice(i0, i1), y: tr.y.slice(i0, i1) };
-    for (const key of ["customdata", "text", "hovertext"]) if (Array.isArray(tr[key]) && tr[key].length === t.length) out[key] = tr[key].slice(i0, i1);
+    if (!t || !Array.isArray(tr.y) || tr.y.length !== t.length) return tr;
+    const i0 = range ? Math.max(0, lowerBound(t, r0) - 1) : 0, i1 = range ? Math.min(t.length, lowerBound(t, r1) + 1) : t.length;
+    const extra = ["customdata", "text", "hovertext"].filter((key) => Array.isArray(tr[key]) && tr[key].length === t.length);
+    if (i1 - i0 <= 2 * nb) {
+      if (!range) return tr;
+      const out = { ...tr, x: tr.x.slice(i0, i1), y: tr.y.slice(i0, i1) };
+      for (const key of extra) out[key] = tr[key].slice(i0, i1);
+      return out;
+    }
+    reduced = true;
+    const keep = envelopeIdx(t, tr.y, i0, i1, r0, r1, nb), pick = (a) => keep.map((i) => a[i]);
+    const out = { ...tr, x: pick(tr.x), y: pick(tr.y) };
+    for (const key of extra) out[key] = pick(tr[key]);
     return out;
   });
+  return { data, reduced };
 }
 
 async function render(fig, tab) {
@@ -767,10 +808,14 @@ async function render(fig, tab) {
     }
   }
   layout.shapes = fig.baseShapes.concat(time ? segShapes() : []);
+  layout.height = fitHeight(fig, gd);
   const range = time ? sliceRange() : null;
-  S.fig = { tab, time, meta: layout.meta || {}, base: fig.baseShapes, src: fig, sliced: range };
+  const { data, reduced } = time ? dataFor(fig, range) : { data: fig.data, reduced: false };
+  // envSpan: the view width the thinning was made for; zooming in well past it draws again
+  S.fig = { tab, time, meta: layout.meta || {}, base: fig.baseShapes, src: fig, sliced: range,
+            envSpan: reduced ? S.view[1] - S.view[0] : null };
   clearLive();
-  await Plotly.react(gd, dataFor(fig, range), layout, PLOT_CONFIG);
+  await Plotly.react(gd, data, layout, PLOT_CONFIG);
   noteRendered();
 }
 
@@ -794,6 +839,61 @@ function noteShapes() {
     const pm = el.parentNode.getCTM(), sm = el.ownerSVGElement.getCTM();
     S.shapeEls.push({ el, xref: sh.xref, yref: sh.yref, ox: pm.e - sm.e, oy: pm.f - sm.f });
   }
+}
+
+/* ------------------------------------------------------------------ fit to the screen */
+
+/* The figures are made taller than a laptop screen (Overview ~1030 px), so the lower panels sat
+   below the fold. Fitted (the default; V switches), a figure takes the height between the tabs and
+   the label panel, so every panel is in view without scrolling; the panels shrink to make room, but
+   never below FIT_ROW_MIN px each (more panels than fit: the page scrolls, as before). The server's
+   height is kept (fig.fullH) for V. */
+const FIT_ROW_MIN = 110;  // below this the panels lose too much detail: scroll instead
+let fitOn = true;
+try { fitOn = localStorage.getItem("scintlab.fit") !== "0"; } catch { /* private window: default */ }
+
+function panelRows(layout) {
+  const rows = new Set();
+  for (const [k, v] of Object.entries(layout)) {
+    if (/^yaxis\d*$/.test(k) && v && v.domain && !v.overlaying) rows.add(v.domain.join());
+    if (/^polar\d*$/.test(k) && v && v.domain && v.domain.y) rows.add(`p${v.domain.y.join()}`);
+  }
+  return Math.max(1, rows.size);
+}
+function fitHeight(fig, el) {
+  if (fig.fullH === undefined) fig.fullH = fig.layout.height || 600;
+  if (!fitOn) return fig.fullH;
+  const card = el.closest(".plot-card"), below = [$("#review-panel"), $("#label-panel")];
+  const top = card.getBoundingClientRect().top + scrollY;
+  const under = below.reduce((h, b) => h + (b && !b.classList.contains("hidden") ? b.offsetHeight + 10 : 0), 0);
+  const m = fig.layout.margin || {}, frame = (m.t ?? 50) + (m.b ?? 45);
+  const avail = innerHeight - top - under - 12 - 8 - 4;  // card padding, the label panel's gap to the bottom, slack
+  return Math.max(FIT_ROW_MIN * panelRows(fig.layout) + frame, Math.round(avail));
+}
+/* the shown figure at the height it should have now (window resized, label panel grew, V) */
+async function refit() {
+  for (const [el, fig] of [[gd, S.fig && S.fig.src], [sky, S.skySrc]]) {
+    if (!fig || !el.data || !el._fullLayout || el.classList.contains("hidden")) continue;
+    const h = fitHeight(fig, el);
+    if (Math.abs(el._fullLayout.height - h) < 3) continue;
+    fig.layout.height = h;
+    if (el === gd) { if (gd._live) { clearTimeout(settleTimer); await commitView(); } clearLive(); }
+    await Plotly.relayout(el, { height: h });
+    if (el === gd) noteRendered();
+  }
+}
+let refitTimer = null;
+const refitSoon = () => { clearTimeout(refitTimer); refitTimer = setTimeout(() => refit().catch(() => {}), 120); };
+function toggleFit() {
+  fitOn = !fitOn;
+  try { localStorage.setItem("scintlab.fit", fitOn ? "1" : "0"); } catch { /* not kept */ }
+  refit().catch(() => {});
+  toast(fitOn ? "Fit to screen: every panel in view (V: full height)" : "Full height: scroll for the lower panels (V: fit to screen)");
+}
+addEventListener("resize", refitSoon);
+if (self.ResizeObserver) {
+  const ro = new ResizeObserver(refitSoon);  // header facts wrapping, the ranges list opening, the reviewer panel
+  for (const q of [".top", "#tab-tools", "#label-panel", "#review-panel"]) { const el = document.querySelector(q); if (el) ro.observe(el); }
 }
 
 /* ------------------------------------------------------------------ pan / zoom (as the dashboard) */
@@ -872,7 +972,8 @@ async function commitView() {
   if (S.fig.tab === "highrate" && hrStale()) { showTab("highrate"); return; }
   const want = sliceRange(), have = S.fig.sliced, [a, b] = S.view;
   // re-cut the traces when the view leaves what is drawn, or is much narrower than it (fewer points)
-  const recut = !want !== !have || (want && (a < have[0] || b > have[1] || (b - a) * 3 < (have[1] - have[0]) / 2));
+  const recut = !want !== !have || (want && (a < have[0] || b > have[1] || (b - a) * 3 < (have[1] - have[0]) / 2))
+    || (S.fig.envSpan && (b - a) * 1.5 < S.fig.envSpan);  // thinned for a wider view: draw the detail
   if (recut) { await render(S.fig.src, S.fig.tab); return; }
   const upd = { "xaxis.range": S.view.map(iso) };
   for (const id in gd._fullLayout._plots) {
@@ -1584,6 +1685,7 @@ function bind() {
     else if (k === "u") backToLast();
     else if (k === "q") toggleQueue();
     else if (k === "t") tecZoom();
+    else if (k === "v") toggleFit();
     else if (k === "a" && S.outside) addMissed();
     else if (k === "f") $("#filter-box").open = !$("#filter-box").open;
     else if (e.key === "]") stepDay(1);

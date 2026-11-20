@@ -56,6 +56,11 @@ the window are drawn as dashed bands, in the colour of your label on them (grey
 if you have not labeled them), and the line above the plot lists them. So a
 stretch you already labeled is not judged twice.
 
+Each figure is fitted to the screen: every panel sits between the tabs and
+the label panel, so nothing is below the fold. Panels never get shorter than
+about 110 px; with more panels than that allows, the page scrolls. `V` switches
+to the full, taller figures (and back); the choice is remembered in this browser.
+
 Switch tabs with `Tab` / `Shift+Tab`, jump back to the previous tab with `` ` ``,
 or go to one directly with `Shift+1`… The Overview, 20 Hz, Other satellites and
 Sidereal tabs share one time window: zoom in on a fade in one and the others
