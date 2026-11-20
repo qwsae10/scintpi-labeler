@@ -209,11 +209,77 @@ def filter_events(ev: pd.DataFrame, rules: dict) -> pd.DataFrame:
 
 def load_events() -> pd.DataFrame:
     """The installed event index, with the data-quality columns of ``scintlab audit-events``
-    (events/quality.parquet) when they exist; events without them have NaN there."""
+    (events/quality.parquet) when they exist; events without them have NaN there. Events labelers
+    added by hand (``added_events``) follow, with ``added`` True."""
     ev = pd.read_parquet(config.events_path())
     for c in ("start_utc", "end_utc"):
         ev[c] = pd.to_datetime(ev[c], utc=True)
     q = config.events_path().with_name("quality.parquet")
     if q.exists():
         ev = ev.merge(pd.read_parquet(q), on="event_id", how="left")
+    ev["added"] = False
+    add = added_events()
+    if len(add):
+        add = add[~add["event_id"].isin(ev["event_id"])]
+        ev = pd.concat([ev, add], ignore_index=True)
     return ev
+
+
+# ---------------------------------------------------------------- events added by hand
+# A labeler who sees scintillation just outside an event's window (in the margin the plots show
+# around it) marks those minutes, and they become an event of their own at the end of the queue.
+# They are shared by every labeler, kept in events/added.jsonl (a log: an "add" line per event, a
+# "remove" line when one is taken back), and survive a rebuild of the event index. They were not
+# drawn by the sampling plan, so the export leaves them out of the population and its weights.
+
+def added_path() -> Path:
+    return config.events_path().with_name("added.jsonl")
+
+
+def added_events() -> pd.DataFrame:
+    from scintlab.labels import _read
+
+    rows: dict[str, dict] = {}
+    for r in _read(added_path()):
+        if r.get("action") == "add" and r.get("event"):
+            rows[r["event"]["event_id"]] = r["event"]
+        elif r.get("action") == "remove":
+            rows.pop(r.get("event_id"), None)
+    if not rows:
+        return pd.DataFrame()
+    ev = pd.DataFrame(list(rows.values()))
+    for c in ("start_utc", "end_utc"):
+        ev[c] = pd.to_datetime(ev[c], utc=True)
+    ev["added"] = True
+    return ev
+
+
+def make_added_event(src: dict, start: pd.Timestamp, end: pd.Timestamp, minutes: pd.DataFrame,
+                     cfg: dict, user: str, rank: int) -> dict:
+    """The event row for minutes [start, end) of ``src``'s receiver and satellite, measured from
+    their minute products as ``_group_events`` measures a detected event. ``rank``: its place in
+    the random and stratified orders (the caller gives one past the last, so it comes last)."""
+    ch = int(cfg["candidates"]["s4_channel"])
+    s4, s4b = f"s4_{ch}", (f"s4_{3 - ch}" if ch in (1, 2) else None)
+    m = minutes[(minutes["datetime"] >= start) & (minutes["datetime"] < end)]
+    num = lambda col, f: float(getattr(m[col], f)()) if col in m and m[col].notna().any() else np.nan  # noqa: E731
+    lon = src.get("longitude")
+    lon = float(lon) if lon is not None and np.isfinite(float(lon)) else np.nan
+    first_day, last_day = start.floor("D"), (end - pd.Timedelta(minutes=1)).floor("D")
+    return {
+        "event_id": make_event_id(src["receiver"], src["prn"], start, end),
+        "receiver": src["receiver"], "rx_type": src["rx_type"], "date": start.strftime("%Y-%m-%d"),
+        "day_reason": src.get("day_reason", "") if src.get("date") == start.strftime("%Y-%m-%d") else "",
+        "prn": src["prn"], "constellation": src["prn"][0],
+        "start_utc": start.isoformat(), "end_utc": end.isoformat(),
+        "n_minutes": int(round((end - start).total_seconds() / 60)),
+        "span_minutes": int(round((end - start).total_seconds() / 60)),
+        "candidate_minutes": [],  # none chosen by the detector: the export counts every minute
+        "peak_s4": num(s4, "max"), "peak_s4_other": num(s4b, "max") if s4b else np.nan,
+        "mean_s4": num(s4, "mean"), "min_elev": num("elev", "min"), "max_elev": num("elev", "max"),
+        "mean_azim": num("azim", "mean"), "latitude": src.get("latitude"), "longitude": src.get("longitude"),
+        "local_hour": float(local_solar_hour(pd.Series([start]), lon).iloc[0]) if np.isfinite(lon) else np.nan,
+        "has_phase": bool(src.get("has_phase", True)), "crosses_midnight": bool(first_day != last_day),
+        "cut_at_day_edge": False, "queue_rank": rank, "strat_rank": rank, "stratum": "added",
+        "added_by": user, "added_from": src["event_id"],
+    }

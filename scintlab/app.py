@@ -12,7 +12,8 @@ from flask import Flask, jsonify, render_template, request
 from plotly.utils import PlotlyJSONEncoder
 
 from scintlab import __version__, config, figures
-from scintlab.events import filter_events, load_events
+from scintlab import data
+from scintlab.events import added_path, filter_events, load_events, make_added_event
 from scintlab.geomag import dip_latitudes
 from scintlab.labels import LabelStore, load_settings, save_settings
 
@@ -46,8 +47,23 @@ def create_app() -> Flask:
         ev["dip_lat"] = dip_latitudes(ev)  # header only; NaN without ppigrf
         return ev
 
-    state = {"events": events_for_app(), "store": LabelStore()}
+    def added_mtime():
+        try:
+            return added_path().stat().st_mtime_ns
+        except OSError:
+            return None
+
+    state = {"events": events_for_app(), "store": LabelStore(), "added_mtime": added_mtime()}
     state["by_id"] = state["events"].set_index("event_id", drop=False)
+
+    def sync_added() -> None:
+        """Every labeler runs a server of their own: take in the events others added (or took back)."""
+        m = added_mtime()
+        if m == state["added_mtime"]:
+            return
+        state["added_mtime"] = m
+        state["events"] = events_for_app()
+        state["by_id"] = state["events"].set_index("event_id", drop=False)
 
     def store() -> LabelStore:
         return state["store"]
@@ -152,6 +168,7 @@ def create_app() -> Flask:
     def queue():
         """One page of the queue: up to ``limit`` events after position ``after`` (-1 = from the
         start), ``count`` = all events matching, ``next`` = the position to ask for next (None at the end)."""
+        sync_added()
         ev = filtered(request.args)
         count = len(ev)
         after = int(request.args.get("after", -1))
@@ -176,6 +193,7 @@ def create_app() -> Flask:
     @app.get("/api/days")
     def days():
         """Per UTC day: events under the current filters (any status, any day) and how many I decided."""
+        sync_added()
         ev = filtered(request.args, status="all", dates=False)
         mine = store().mine
         act = ev["event_id"].map(lambda e: mine.get(e, {}).get("action"))
@@ -222,6 +240,83 @@ def create_app() -> Flask:
                                         f"json;dur={1000 * (time.perf_counter() - built):.0f}")
         return res
 
+    NEAR = pd.Timedelta(hours=3)  # neighbours are looked for this far either side (the plots show less)
+
+    def neighbours_of(row, t0, t1) -> pd.DataFrame:
+        ev = state["events"]
+        return ev[(ev["receiver"] == row["receiver"]) & (ev["prn"] == row["prn"]) & (ev["event_id"] != row["event_id"])
+                  & (ev["start_utc"] < t1) & (ev["end_utc"] > t0)]
+
+    @app.get("/api/event/<event_id>/neighbours")
+    def neighbours(event_id):
+        """Other events of this receiver and satellite near this one, with my decision on each: the
+        plots mark them in the margin around the event, so one labeled before is seen as such."""
+        sync_added()
+        if event_id not in state["by_id"].index:
+            return jsonify({"error": "event not found"}), 404
+        row = state["by_id"].loc[event_id]
+        near = neighbours_of(row, row["start_utc"] - NEAR, row["end_utc"] + NEAR)
+        mine = store().mine
+        return jsonify([{"event_id": r.event_id, "start_utc": r.start_utc.isoformat(), "end_utc": r.end_utc.isoformat(),
+                         "decision": mine.get(r.event_id)} for r in near.itertuples()])
+
+    def add_rows(rows: pd.DataFrame) -> None:
+        state["events"] = pd.concat([state["events"], rows], ignore_index=True)
+        state["by_id"] = state["events"].set_index("event_id", drop=False)
+
+    @app.post("/api/event/<event_id>/missed")
+    def missed(event_id):
+        """Make minutes [start, end) of this event's receiver and satellite, outside the event, an
+        event of their own at the end of the queue (scintillation the detector left out)."""
+        if event_id not in state["by_id"].index:
+            return jsonify({"error": "event not found"}), 404
+        src = state["by_id"].loc[event_id]
+        p = request.get_json(silent=True) or {}
+        try:
+            utc = lambda t: t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")  # noqa: E731
+            start, end = utc(pd.Timestamp(p["start"])).floor("min"), utc(pd.Timestamp(p["end"])).ceil("min")
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "give start and end (UTC, ISO 8601)"}), 400
+        if end <= start or end - start > pd.Timedelta(hours=6):
+            return jsonify({"error": "the range must be 1 minute to 6 hours long"}), 400
+        if start < src["end_utc"] and end > src["start_utc"]:
+            return jsonify({"error": "the range overlaps this event; mark it as a range of the event instead"}), 400
+        hit = neighbours_of(src, start, end)
+        if len(hit):
+            return jsonify({"error": f"the range overlaps event {hit['event_id'].iloc[0]}, already in the queue",
+                            "event_id": hit["event_id"].iloc[0]}), 409
+        minutes = data.window(src["receiver"], "minute", start, end, src["prn"])
+        if minutes.empty:
+            return jsonify({"error": "no data for this satellite in that range"}), 400
+        ev = state["events"]
+        rank = int(max(ev["queue_rank"].max(), ev["strat_rank"].max() if "strat_rank" in ev else 0)) + 1
+        row = make_added_event({k: _clean(v) for k, v in src.items()}, start, end, minutes, cfg, store().user, rank)
+        from scintlab.labels import _append
+        _append(added_path(), {"action": "add", "user": store().user,
+                               "time_utc": pd.Timestamp.utcnow().isoformat(), "event": row})
+        df = pd.DataFrame([row])
+        for c in ("start_utc", "end_utc"):
+            df[c] = pd.to_datetime(df[c], utc=True)
+        df["added"] = True
+        df["dip_lat"] = dip_latitudes(df)
+        add_rows(df)
+        state["added_mtime"] = added_mtime()
+        return jsonify({"event": event_dict(row["event_id"])})
+
+    @app.post("/api/added/<event_id>/remove")
+    def remove_added(event_id):
+        """Take back an event added by hand (undo)."""
+        ev = state["events"]
+        if event_id not in state["by_id"].index or not bool(state["by_id"].loc[event_id].get("added", False)):
+            return jsonify({"error": "no added event with that id"}), 404
+        from scintlab.labels import _append
+        _append(added_path(), {"action": "remove", "event_id": event_id, "user": store().user,
+                               "time_utc": pd.Timestamp.utcnow().isoformat()})
+        state["events"] = ev[ev["event_id"] != event_id].reset_index(drop=True)
+        state["by_id"] = state["events"].set_index("event_id", drop=False)
+        state["added_mtime"] = added_mtime()
+        return jsonify({"removed": event_id})
+
     @app.post("/api/event/<event_id>/label")
     def label(event_id):
         if event_id not in state["by_id"].index:
@@ -256,6 +351,7 @@ def create_app() -> Flask:
 
     @app.post("/api/reload")
     def reload():
+        state["added_mtime"] = added_mtime()
         state["events"] = events_for_app()
         state["by_id"] = state["events"].set_index("event_id", drop=False)
         state["store"] = LabelStore()

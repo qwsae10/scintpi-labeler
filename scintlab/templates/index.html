@@ -108,6 +108,7 @@
       <span class="muted small" id="gesture-hint">Swipe sideways to pan · pinch or ⌘-scroll to zoom · ⇧-scroll moves a
         panel up/down, ⌘⇧-scroll stretches it · drag to mark a range · double-click or <kbd>0</kbd> resets.
         Shaded band = high-S4 minutes.</span>
+      <span class="near-line hidden" id="near-line"></span>
     </div>
     <section class="plot-card">
       <div class="plot-msg hidden" id="plot-msg"></div>
@@ -139,7 +140,9 @@
         <p class="muted small">Drag across the plot over the part you mean, then press <kbd>1</kbd>–<kbd>4</kbd> for
           its class (<kbd>Esc</kbd> cancels). Click a range to select it: a number changes its class,
           <kbd>Delete</kbd> removes it, and its edges can be dragged. Ranges are saved with the event label;
-          the event label applies to every other minute. A minute has one class: a new range cuts the ranges it overlaps.</p>
+          the event label applies to every other minute. A minute has one class: a new range cuts the ranges it overlaps.
+          Scintillation just outside the shaded event? Drag over it in the margin and press <kbd>A</kbd>: it joins the end
+          of the queue as an event of its own. Dashed bands are other events of this satellite.</p>
         <ul id="seg-list"></ul>
       </details>
       <p class="muted small" id="saved-line"></p>
@@ -212,7 +215,9 @@
       Other satellites, Sidereal) share one time window: zoom on one and the others show the same minutes.</p>
     <p>Drag across the plot to mark part of the event, then press <kbd>1</kbd>–<kbd>4</kbd> for its class;
       <kbd>Esc</kbd> cancels. Click a range to select it: a number changes its class, <kbd>Delete</kbd> removes
-      it, its edges can be dragged.</p>
+      it, its edges can be dragged. Drag in the margin outside the event and press <kbd>A</kbd> to add those minutes to
+      the end of the queue as a new event (<kbd>⌘Z</kbd> takes it back). Dashed bands are other events of the same
+      satellite, coloured by your label on them; the line above the plot says which.</p>
     <p class="muted small">Labels are saved in the background the moment you press them; the corner of the header
       shows anything still being written. You can close the browser at any time and continue later.</p>
     <div class="dialog-buttons"><button class="btn" onclick="this.closest('dialog').close()">Close</button></div>

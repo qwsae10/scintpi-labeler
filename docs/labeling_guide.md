@@ -43,6 +43,19 @@ want to change, and `U` jumps to the last one you labeled. `⌘Z` (`Ctrl+Z`)
 undoes your last label, skip or clear, and goes back to that event; press it
 again to undo the one before. `N` writes a note (`Enter` returns to the keys).
 
+**Scintillation just outside the event.** The plots show a margin around the
+shaded event, and sometimes the real thing sits there, missed by the detector.
+Ranges stay inside the event, so instead drag over those minutes in the margin
+and press `A`: they become an event of their own at the end of the queue
+(shared with the other labelers; `⌘Z` takes it back). Label the event you are
+on as usual. Added events are kept out of the export's population weights,
+since the sampling plan did not pick them.
+
+**Other events in the margin.** Other events of the same satellite that fall in
+the window are drawn as dashed bands, in the colour of your label on them (grey
+if you have not labeled them), and the line above the plot lists them. So a
+stretch you already labeled is not judged twice.
+
 Switch tabs with `Tab` / `Shift+Tab`, jump back to the previous tab with `` ` ``,
 or go to one directly with `Shift+1`… The Overview, 20 Hz, Other satellites and
 Sidereal tabs share one time window: zoom in on a fade in one and the others

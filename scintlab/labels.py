@@ -214,6 +214,8 @@ def export() -> dict:
     ev = load_events()
     rules = {**cfg.get("queue_filters", {}), "elevation_mask_deg": cfg["display"]["elevation_mask_deg"]}
     pop = filter_events(ev, rules)
+    if "added" in pop:  # events added by hand were not drawn by the sampling plan
+        pop = pop[~pop["added"].fillna(False).astype(bool)]
     d = store.all_decisions()
     out_dir = config.data_root() / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)

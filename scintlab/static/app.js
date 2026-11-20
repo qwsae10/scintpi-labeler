@@ -12,6 +12,8 @@ const S = {
   rendered: null, yRendered: null, yMan: new Map(),  // ranges the plot was drawn with; y set by hand
   fig: null,              // what is drawn: {tab, time, meta, base (the figure's own shapes)}
   openedAt: null, selSeg: null, pendingSeg: null, draft: null,
+  outside: null,          // [a, b] ms: a range drawn outside the event, waiting for A (add as a new event)
+  near: [],               // other events of this receiver and satellite around this one
   days: {},               // UTC date -> {n, labeled, skipped}: my progress per day under the filters
   cal: { from: null, to: null, anchor: null },  // the days the queue is limited to (null = all)
 };
@@ -360,11 +362,11 @@ const PAGE = 500, NEAR = 60;
 
 function addToList(events, start) {
   const list = $("#queue-list"), frag = document.createDocumentFragment();
-  events.forEach((e, k) => {
-    const li = document.createElement("li"), i = start + k;
+  events.forEach((e) => {
+    const li = document.createElement("li");
     li.dataset.id = e.event_id;
     li.innerHTML = `<span class="dot"></span><b>${e.receiver}</b> ${e.prn} <span class="muted">${e.start_utc.slice(0, 16).replace("T", " ")}</span> <span class="s4">${num(e.peak_s4)}</span>`;
-    li.addEventListener("click", () => { S.index = i; loadEvent(); });
+    li.addEventListener("click", () => { S.index = S.queue.findIndex((x) => x.event_id === e.event_id); loadEvent(); });
     frag.appendChild(li);
   });
   list.appendChild(frag);
@@ -502,8 +504,11 @@ function loadEvent() {
   S.view = S.home.slice();
   S.yMan.clear();
   S.tecPrev = null;
-  S.selSeg = S.pendingSeg = S.draft = null;
+  S.selSeg = S.pendingSeg = S.draft = S.outside = null;
+  S.near = [];
+  renderNear();
   S.openedAt = null;
+  loadNear(q.event_id);
   $("#ev-title").textContent = `${q.receiver} · ${q.prn}`;
   $("#ev-time").textContent = `${fmtTime(q.start_utc)} – ${q.end_utc.slice(11, 16)} · ${q.n_minutes} min · local ${num(q.local_hour, 1)} h`;
   $("#ev-facts").innerHTML = [
@@ -1029,7 +1034,107 @@ function segShapes() {
                  line: { color: c, width: sel ? 2 : 1, dash: label ? "solid" : "dot" } });
     }
   }
+  // the neighbours: a dashed band in the colour of my label on them (grey if none); named in #near-line.
+  // (No text on the plot: shape labels would not follow the live pan.)
+  for (const n of S.near) {
+    const d = S.decisions.get(n.event_id), c = d && d.action === "label" ? classColor(d.label) : "#98a2b3";
+    out.push({ type: "rect", xref: "x", yref: "paper", x0: n.start_utc, x1: n.end_utc, y0: 0, y1: 1, layer: "below",
+               fillcolor: rgba(c, d && d.action === "label" ? 0.12 : 0.05), line: { color: c, width: 1, dash: "dash" } });
+  }
+  if (S.outside) {
+    out.push({ type: "rect", xref: "x", yref: "paper", x0: iso(S.outside[0]), x1: iso(S.outside[1]), y0: 0, y1: 1,
+               layer: "below", fillcolor: rgba("#7c3aed", 0.1), line: { color: "#7c3aed", width: 1.5, dash: "dot" } });
+  }
+  renderNear();
   return out;
+}
+
+function renderNear() {
+  const el = $("#near-line"), q = current();
+  const [a, b] = S.home || [0, 0];
+  const shown = q ? S.near.filter((n) => parseUTC(n.start_utc) < b && parseUTC(n.end_utc) > a) : [];
+  el.classList.toggle("hidden", !shown.length);
+  el.innerHTML = shown.length ? "Also in this window (dashed): " + shown.map((n) => {
+    const d = S.decisions.get(n.event_id);
+    const what = !d ? "not labeled yet" : d.action === "skip" ? "skipped" : `<b style="color:${classColor(d.label)}">labeled ${d.label}</b>`;
+    return `${hm(parseUTC(n.start_utc))}–${hm(parseUTC(n.end_utc))} ${what}`;
+  }).join(" · ") : "";
+}
+
+/* Other events of this satellite in the window (the margin around the event): one labeled
+   before shows its label, so the same minutes are not judged twice. */
+async function loadNear(id) {
+  let near;
+  try { near = await api(`/api/event/${enc(id)}/neighbours`); } catch { return; }
+  if (!current() || current().event_id !== id) return;
+  const pending = new Set(saveQ.map((j) => j.id));
+  for (const n of near) if (n.decision && !S.decisions.has(n.event_id) && !pending.has(n.event_id)) S.decisions.set(n.event_id, n.decision);
+  S.near = near;
+  renderNear();
+  if (near.length) drawShapes();
+}
+
+/* A range drawn wholly outside the event: scintillation the detector left out. A makes it an
+   event of its own at the end of the queue (shared with the other labelers); ⌘Z takes it back. */
+function offerMissed(a, b) {
+  const hit = S.near.find((n) => parseUTC(n.start_utc) < b && parseUTC(n.end_utc) > a);
+  if (hit) {
+    S.outside = null;
+    drawShapes();
+    toast("Those minutes are already another event, with its own place in the queue", true);
+    return;
+  }
+  S.outside = [a, b];
+  drawShapes();
+  toast(`${hm(a)}–${hm(b)} is outside the event: A adds it to the queue as a new event, Esc drops it`);
+}
+
+async function addMissed() {
+  const q = current();
+  if (!q || !S.outside) return;
+  const [a, b] = S.outside;
+  let r;
+  try {
+    r = await post(`/api/event/${enc(q.event_id)}/missed`, { start: new Date(a).toISOString(), end: new Date(b).toISOString() });
+  } catch (e) { toast(`Not added: ${e.message}`, true); return; }
+  const ev = r.event;
+  undoStack.push({ added: ev.event_id });
+  if (current() && current().event_id === q.event_id) {
+    S.outside = null;
+    S.near = S.near.concat({ event_id: ev.event_id, start_utc: ev.start_utc, end_utc: ev.end_utc, decision: null });
+    drawShapes();
+  }
+  // shown in the list now if the list is complete; otherwise it comes with the last page
+  if ((S.more === null || S.more === undefined) && ["unlabeled", "all"].includes($("#f-status").value)) {
+    const last = S.queue[S.queue.length - 1], item = { ...ev, decision: null, _pos: last ? last._pos + 1 : 0 };
+    S.queue.push(item);
+    S.total = (S.total ?? S.queue.length - 1) + 1;
+    $("#queue-count").textContent = S.total.toLocaleString();
+    addToList([item], S.queue.length - 1);
+    renderPos();
+  }
+  const mask = Number($("#f-elev_mask").value || S.settings.elevation_mask_deg);
+  toast(`${hm(a)}–${hm(b)} added at the end of the queue`
+    + (ev.max_elev !== null && ev.max_elev < mask ? ` (its elevation is under your ${mask}° mask, so the queue hides it)` : "")
+    + ". ⌘Z takes it back");
+}
+
+async function removeAdded(id) {
+  try { await post(`/api/added/${enc(id)}/remove`, {}); } catch (e) { undoStack.push({ added: id }); toast(`Not undone: ${e.message}`, true); return; }
+  S.near = S.near.filter((n) => n.event_id !== id);
+  const i = S.queue.findIndex((e) => e.event_id === id);
+  if (i >= 0) {
+    S.queue.splice(i, 1);
+    if (S.total) S.total -= 1;
+    $("#queue-count").textContent = (S.total ?? S.queue.length).toLocaleString();
+    const li = $(`#queue-list li[data-id="${CSS.escape(id)}"]`);
+    if (li) li.remove();
+    if (i < S.index) S.index -= 1;
+    else if (i === S.index) { S.index = Math.min(S.index, S.queue.length - 1); loadEvent(); }
+    renderPos();
+  }
+  drawShapes();
+  toast("Undone: the added event is gone from the queue");
 }
 async function drawShapes() {
   if (!S.fig || !S.fig.time || !gd._fullLayout || !gd._fullLayout.xaxis) return;
@@ -1185,16 +1290,19 @@ gd.addEventListener("mousedown", (e) => {
       return;
     }
     // whole minutes, inside the event (the event label covers the rest)
-    const a = Math.max(evS, Math.floor(S.draft[0] / MIN) * MIN), b = Math.min(evE, Math.ceil(S.draft[1] / MIN) * MIN);
+    const ra = Math.floor(S.draft[0] / MIN) * MIN, rb = Math.ceil(S.draft[1] / MIN) * MIN;
+    const a = Math.max(evS, ra), b = Math.min(evE, rb);
     S.draft = null;
-    if (b <= a) { drawShapes(); toast("The range does not overlap the shaded event", true); return; }
+    S.outside = null;
+    if (b <= a) { offerMissed(ra, rb); return; }  // wholly outside: maybe an event the detector missed
     if (S.pendingSeg !== null) list.splice(S.pendingSeg, 1);  // one unclassified range at a time
     list.push({ start: new Date(a).toISOString(), end: new Date(b).toISOString(), label: null });
     S.pendingSeg = list.length - 1;
     S.selSeg = null;
     renderSegments();
     drawShapes();
-    toast(`${hm(a)}–${hm(b)}: press 1–${S.boot.classes.length} for its class, Esc to cancel`);
+    toast(`${hm(a)}–${hm(b)}: press 1–${S.boot.classes.length} for its class, Esc to cancel`
+      + (ra < a || rb > b ? ". Only the part inside the event is kept: draw outside it to add a new event" : ""));
   };
   addEventListener("mousemove", move);
   addEventListener("mouseup", up);
@@ -1291,6 +1399,7 @@ function record(body, message, opts = {}) {
 function undo() {
   const u = undoStack.pop();
   if (!u) { toast("Nothing to undo"); return; }
+  if (u.added) { removeAdded(u.added); return; }
   const i = S.queue.findIndex((e) => e.event_id === u.id);
   const q = i >= 0 ? S.queue[i] : { event_id: u.id };
   const now = S.decisions.get(u.id), p = u.prev;
@@ -1411,6 +1520,7 @@ function toggleQueue() {
 }
 
 function onEscape() {
+  if (S.outside) { S.outside = null; drawShapes(); return true; }
   if (S.pendingSeg !== null) { removeSeg(S.pendingSeg); return true; }
   if (S.draft) { S.draft = null; drawShapes(); return true; }
   if (S.selSeg !== null) { S.selSeg = null; renderSegments(); drawShapes(); return true; }
@@ -1474,6 +1584,7 @@ function bind() {
     else if (k === "u") backToLast();
     else if (k === "q") toggleQueue();
     else if (k === "t") tecZoom();
+    else if (k === "a" && S.outside) addMissed();
     else if (k === "f") $("#filter-box").open = !$("#filter-box").open;
     else if (e.key === "]") stepDay(1);
     else if (e.key === "[") stepDay(-1);
