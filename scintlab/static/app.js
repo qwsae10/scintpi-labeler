@@ -870,7 +870,8 @@ function resetView() {
   showTab(S.tab);
 }
 
-/* T: the TEC panel at its mean over the shown time ± TEC_HALF TECU; T again puts back the range it
+/* T: the TEC panel at its mean over the event's minutes (start to end, not the padded window or
+   the zoom) ± TEC_HALF TECU; T again puts back the range it
    had before. Kept per event (a new event starts from the server's range). */
 const TEC_HALF = 5;
 async function tecZoom() {
@@ -883,7 +884,7 @@ async function tecZoom() {
     if (S.tecPrev.range) S.yMan.set(key, S.tecPrev.range); else S.yMan.delete(key);
     S.tecPrev = null;
   } else {
-    const yid = ax.replace("axis", ""), [a, b] = S.view, ts = traceTimes(S.fig.src);
+    const yid = ax.replace("axis", ""), a = parseUTC(q.start_utc), b = parseUTC(q.end_utc), ts = traceTimes(S.fig.src);
     let sum = 0, n = 0;
     S.fig.src.data.forEach((tr, k) => {
       if ((tr.yaxis || "y") !== yid || !Array.isArray(tr.y) || !Array.isArray(tr.x)) return;
@@ -893,7 +894,7 @@ async function tecZoom() {
         if (t[i] >= a && t[i] <= b && v !== null && Number.isFinite(v)) { sum += v; n++; }
       }
     });
-    if (!n) { toast("No TEC in the shown time"); return; }
+    if (!n) { toast("No TEC during the event"); return; }
     const m = sum / n;
     S.tecPrev = { id: q.event_id, range: S.yMan.get(key) || null };
     S.yMan.set(key, [m - TEC_HALF, m + TEC_HALF]);

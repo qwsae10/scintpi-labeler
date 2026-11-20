@@ -448,6 +448,7 @@ def sidereal(event: dict, settings: dict) -> dict:
 
 # --------------------------------------------------------------------------- skyplot
 
+SKY_CHUNK = 9000  # points per sky-map trace: under regl-scatter2d's 1e4, so drawing keeps their order
 SKY_INDICES = [("s4_1", "S4 L1", 0, 0.6, "Viridis"), ("sigma_phi_1", "σφ L1 (rad)", 0, 0.5, "Plasma"),
                ("tau1e_1", "τ L1 (s)", 0, 3, "Cividis_r"), ("snr1_mean", "C/N₀ L1 (dB-Hz)", 25, 50, "Greys_r")]
 
@@ -478,16 +479,27 @@ def skyplot(event: dict, settings: dict) -> dict:
             d = day[day["sigma_phi_quality_flag_1"].eq(0)]
         else:
             d = day
+        # Sorted so the highest values are drawn last, on top. A day is ~30k satellite-minutes per map,
+        # and plotly's polar WebGL trace leaves regl-scatter2d's default snap (1e4) in place: above
+        # 10k points it draws them in the order of a spatial index, not of the data, and the sort is
+        # lost. So the sorted points go in consecutive traces of at most SKY_CHUNK, which keep their
+        # order inside, and traces are drawn in turn.
         d = d.sort_values(col, na_position="first")
-        # A day is ~30k satellite-minutes per map: rounded to what a 4 px dot can show (as float64:
-        # a rounded float32 still prints as 1.1299999952316284), the payload is much smaller.
-        fig.add_trace(go.Scatterpolargl(
-            r=(90 - d["elev"].astype(float)).round(1), theta=d["azim"].astype(float).round(1), mode="markers",
-            marker={"size": 4, "color": d[col].astype(float).round(3), "cmin": lo, "cmax": hi, "colorscale": cmap,
-                    "colorbar": {"title": "", "len": 0.38, "x": 0.44 + 0.56 * (c - 1),
-                                 "y": 0.79 - 0.58 * (r - 1), "thickness": 10}},
-            text=d["prn"] + " " + d["datetime"].dt.strftime("%H:%M"), showlegend=False,
-            hovertemplate="%{text}<br>" + title + " %{marker.color:.2f}<extra></extra>"), row=r, col=c)
+        # Rounded to what a 4 px dot can show (as float64: a rounded float32 still prints as
+        # 1.1299999952316284), the payload is much smaller.
+        rr, th = (90 - d["elev"].astype(float)).round(1), d["azim"].astype(float).round(1)
+        val, txt = d[col].astype(float).round(3), d["prn"] + " " + d["datetime"].dt.strftime("%H:%M")
+        for i0 in range(0, max(len(d), 1), SKY_CHUNK):
+            sl = slice(i0, i0 + SKY_CHUNK)
+            marker = {"size": 4, "color": val.iloc[sl], "cmin": lo, "cmax": hi, "colorscale": cmap}
+            if i0 == 0:
+                marker["colorbar"] = {"title": "", "len": 0.38, "x": 0.44 + 0.56 * (c - 1),
+                                      "y": 0.79 - 0.58 * (r - 1), "thickness": 10}
+            else:
+                marker["showscale"] = False
+            fig.add_trace(go.Scatterpolargl(
+                r=rr.iloc[sl], theta=th.iloc[sl], mode="markers", marker=marker, text=txt.iloc[sl], showlegend=False,
+                hovertemplate="%{text}<br>" + title + " %{marker.color:.2f}<extra></extra>"), row=r, col=c)
         fig.add_trace(go.Scatterpolargl(r=90 - trk["elev"], theta=trk["azim"], mode="lines+markers",
                                         line={"color": "#d92d20", "width": 4},
                                         marker={"size": 7, "color": "#d92d20", "line": {"color": "white", "width": 1}},

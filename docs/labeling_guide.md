@@ -128,7 +128,7 @@ rules:
 1. **Zoom in.** Pinch (or `⌘`-scroll) on the plot to zoom at the cursor, swipe
    sideways to pan, and double-click or press `0` to reset; `Shift`-scroll moves
    a panel up or down and `⌘Shift`-scroll stretches it. `T` sets the TEC
-   panel to its mean over the shown time ±5 TECU (`T` again puts it back). A
+   panel to its mean over the event (the shaded minutes) ±5 TECU (`T` again puts it back). A
    20-minute window of 20 Hz data looks like noise at full width. Zoomed to a
    minute, fading versus oscillation is usually clear.
 2. **Change the window.** The "Window ±" box sets the context (1–30 min).
