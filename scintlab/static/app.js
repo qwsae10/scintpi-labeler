@@ -93,6 +93,14 @@ const iso = (ms) => new Date(Math.round(ms)).toISOString().slice(0, 23);
 const parseUTC = (s) => { s = String(s).replace(" ", "T"); return Date.parse(/Z|[+-]\d\d:?\d\d$/.test(s) ? s : s + "Z"); };
 const hm = (ms) => new Date(ms).toISOString().slice(11, 16);
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+/* Bring el into view inside its own scrolling box only. scrollIntoView scrolls every box around it
+   too (the sidebar and the page), which pushed the sidebar's head out of reach. */
+function scrollWithin(box, el) {
+  if (!box || !el) return;
+  const b = box.getBoundingClientRect(), r = el.getBoundingClientRect();
+  if (r.top < b.top) box.scrollTop -= b.top - r.top;
+  else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+}
 const classColor = (label) => css(`--c${Math.max(0, S.boot.classes.indexOf(label))}`);
 
 /* ------------------------------------------------------------------ setup */
@@ -279,7 +287,7 @@ function stepDay(d) {
   if (!pick) { toast(d > 0 ? "No later day with events left" : "No earlier day with events left"); return; }
   selectDays(pick, pick);
   const b = $(`#cal .day[data-date="${pick}"]`);
-  if (b) b.scrollIntoView({ block: "nearest" });
+  scrollWithin($("#cal"), b);
 }
 
 /* the day counts follow my decisions without asking the server */
@@ -420,7 +428,7 @@ function markQueueItem(id) {
 function highlightQueue() {
   $$("#queue-list li").forEach((li, i) => li.classList.toggle("current", i === S.index));
   const cur = $$("#queue-list li")[S.index];
-  if (cur) cur.scrollIntoView({ block: "nearest" });
+  scrollWithin($("#queue-list"), cur);
 }
 
 const current = () => S.queue[S.index];
@@ -475,6 +483,7 @@ function loadEvent() {
   S.home = homeWindow(q);
   S.view = S.home.slice();
   S.yMan.clear();
+  S.tecPrev = null;
   S.selSeg = S.pendingSeg = S.draft = null;
   S.openedAt = null;
   $("#ev-title").textContent = `${q.receiver} · ${q.prn}`;
@@ -482,6 +491,8 @@ function loadEvent() {
   $("#ev-facts").innerHTML = [
     ["Peak S4", num(q.peak_s4)], ["Other freq", num(q.peak_s4_other)],
     ["Elevation", `${Math.round(q.min_elev)}–${Math.round(q.max_elev)}°`], ["Azimuth", `${Math.round(q.mean_azim)}°`],
+    ["Site lat", q.latitude === null || q.latitude === undefined ? "–" : `${Math.abs(q.latitude).toFixed(1)}° ${q.latitude >= 0 ? "N" : "S"}`],
+    ["Dip lat", q.dip_lat === null || q.dip_lat === undefined ? "–" : `${q.dip_lat < 0 ? "−" : ""}${Math.abs(q.dip_lat).toFixed(1)}°`],
     ["Type", q.rx_type.toUpperCase()], ["Day", q.day_reason || "–"],
   ].concat(dataFacts(q)).map(([k, v]) => `<span><em>${k}</em>${v}</span>`).join("");
   renderPos();
@@ -504,7 +515,7 @@ function loadEvent() {
   const was = $("#cal .day.cur");
   if (was) paintDay(was);
   const b = $(`#cal .day[data-date="${q.date}"]`);
-  if (b) { paintDay(b); if (!S.cal.from) b.scrollIntoView({ block: "nearest" }); }
+  if (b) { paintDay(b); if (!S.cal.from) scrollWithin($("#cal"), b); }
   showTab(S.tab);
 }
 
@@ -855,7 +866,44 @@ function resetView() {
   clearTimeout(settleTimer);
   S.view = S.home.slice();
   S.yMan.clear();
+  S.tecPrev = null;
   showTab(S.tab);
+}
+
+/* T: the TEC panel at its mean over the shown time ± TEC_HALF TECU; T again puts back the range it
+   had before. Kept per event (a new event starts from the server's range). */
+const TEC_HALF = 5;
+async function tecZoom() {
+  const q = current();
+  if (!q || !S.fig || !S.fig.time || !S.fig.src || !gd._fullLayout) return;
+  const yq = S.fig.meta.yq || {}, ax = Object.keys(yq).find((k) => yq[k] === "tec");
+  if (!ax) { toast(S.tab === "overview" ? "No TEC for this satellite" : "TEC is on the Overview tab"); return; }
+  const key = yKey(S.tab, ax, S.fig.meta);
+  if (S.tecPrev && S.tecPrev.id === q.event_id) {
+    if (S.tecPrev.range) S.yMan.set(key, S.tecPrev.range); else S.yMan.delete(key);
+    S.tecPrev = null;
+  } else {
+    const yid = ax.replace("axis", ""), [a, b] = S.view, ts = traceTimes(S.fig.src);
+    let sum = 0, n = 0;
+    S.fig.src.data.forEach((tr, k) => {
+      if ((tr.yaxis || "y") !== yid || !Array.isArray(tr.y) || !Array.isArray(tr.x)) return;
+      const t = ts[k] || Float64Array.from(tr.x, parseUTC);
+      for (let i = 0; i < t.length; i++) {
+        const v = tr.y[i];
+        if (t[i] >= a && t[i] <= b && v !== null && Number.isFinite(v)) { sum += v; n++; }
+      }
+    });
+    if (!n) { toast("No TEC in the shown time"); return; }
+    const m = sum / n;
+    S.tecPrev = { id: q.event_id, range: S.yMan.get(key) || null };
+    S.yMan.set(key, [m - TEC_HALF, m + TEC_HALF]);
+    toast(`TEC ${m.toFixed(1)} ± ${TEC_HALF} TECU · T again to go back`);
+  }
+  clearTimeout(settleTimer);
+  if (gd._live) await commitView();
+  clearLive();
+  await Plotly.relayout(gd, { [`${ax}.range`]: S.yMan.get(key) || S.fig.src.yServer[ax] });
+  noteRendered();
 }
 
 function plotAtY(clientY) {
@@ -1132,22 +1180,38 @@ async function pumpSave() {
 }
 addEventListener("beforeunload", (e) => { if (saveQ.length) { e.preventDefault(); e.returnValue = ""; } });
 
-function record(body, message) {
-  const q = current();
+/* ⌘Z / Ctrl+Z: each decision (label, skip, clear) remembers what the event had before, and undo
+   writes that back (the label file is a log, so the restored decision is simply the newest line). */
+const undoStack = [];
+const UNDO_MAX = 200;
+const describe = (d) => (!d ? "no label" : d.action === "skip" ? "skipped" : d.label);
+
+/* opts.q: the event (default: the current one); opts.restore: body is a complete earlier decision
+   (undo), written as it is and not itself put on the undo stack */
+function record(body, message, opts = {}) {
+  const q = opts.q || current();
   if (!q) return null;
   const id = q.event_id;
-  const before = (S.decisions.get(id) || {}).action;
-  body = {
-    ...body, notes: $("#notes").value, for_review: $("#for-review").checked,
-    segments: body.action === "label" ? segs().filter((s) => s.label).map((s) => ({ start: s.start, end: s.end, label: s.label })) : [],
-    elevation_mask_deg: Number($("#f-elev_mask").value || S.settings.elevation_mask_deg),
-    seconds_on_event: S.openedAt ? Math.round((Date.now() - S.openedAt) / 1000) : null,
-  };
+  const prev = S.decisions.get(id);
+  const before = (prev || {}).action;
+  if (!opts.restore) {
+    body = {
+      ...body, notes: $("#notes").value, for_review: $("#for-review").checked,
+      segments: body.action === "label" ? segs().filter((s) => s.label).map((s) => ({ start: s.start, end: s.end, label: s.label })) : [],
+      elevation_mask_deg: Number($("#f-elev_mask").value || S.settings.elevation_mask_deg),
+      seconds_on_event: S.openedAt ? Math.round((Date.now() - S.openedAt) / 1000) : null,
+    };
+    undoStack.push({ id, prev: prev ? { ...prev, segments: (prev.segments || []).map((s) => ({ ...s })) } : null });
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+  }
   if (body.action === "clear") S.decisions.delete(id);
   else S.decisions.set(id, { ...body, event_id: id });
   if (body.action === "label") {
     S.history = S.history.filter((h) => h !== id).concat(id);
     S.drafts.set(id, body.segments.map((s) => ({ ...s })));
+  } else if (opts.restore) {
+    S.history = S.history.filter((h) => h !== id);
+    S.drafts.set(id, []);
   }
   countDecision(q, before, body.action === "clear" ? undefined : body.action);
   saveQ.push({ id, body });
@@ -1156,6 +1220,22 @@ function record(body, message) {
   markQueueItem(id);
   toast(message);
   return id;
+}
+
+/* put the last decision's event back the way it was, and go to it */
+function undo() {
+  const u = undoStack.pop();
+  if (!u) { toast("Nothing to undo"); return; }
+  const i = S.queue.findIndex((e) => e.event_id === u.id);
+  const q = i >= 0 ? S.queue[i] : { event_id: u.id };
+  const now = S.decisions.get(u.id), p = u.prev;
+  const body = p
+    ? { action: p.action, label: p.label, confidence: p.confidence, notes: p.notes || "", for_review: !!p.for_review,
+        segments: p.action === "label" ? p.segments || [] : [], elevation_mask_deg: p.elevation_mask_deg,
+        seconds_on_event: p.seconds_on_event ?? null }
+    : { action: "clear", notes: "", for_review: false, segments: [] };
+  record(body, `Undone: ${describe(now)} → ${describe(p)}`, { q, restore: true });
+  if (i >= 0) { S.index = i; loadEvent(); }
 }
 
 function decide(label) {
@@ -1307,7 +1387,9 @@ function bind() {
       if (e.key === "Escape" || (e.key === "Enter" && el.id === "notes")) { e.preventDefault(); el.blur(); }
       return;
     }
-    if (e.metaKey || e.ctrlKey || e.altKey || $("dialog[open]")) return;
+    if ($("dialog[open]")) return;
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); return; }
     const d = e.code && e.code.startsWith("Digit") ? Number(e.code.slice(5)) : NaN;
     if (e.shiftKey && d >= 1) {
@@ -1326,6 +1408,8 @@ function bind() {
     else if (k === "n") $("#notes").focus();
     else if (k === "u") backToLast();
     else if (k === "q") toggleQueue();
+    else if (k === "t") tecZoom();
+    else if (k === "f") $("#filter-box").open = !$("#filter-box").open;
     else if (e.key === "]") stepDay(1);
     else if (e.key === "[") stepDay(-1);
     else if (k === "?") $("#help").showModal();

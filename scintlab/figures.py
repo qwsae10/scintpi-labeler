@@ -306,7 +306,10 @@ def overview(event: dict, settings: dict) -> dict:
                            showarrow=False, font={"color": "#b54708", "size": 11})
     heights = {"cn0": 230, "geo": 140, "s4": 190, "tau": 160, "tec": 160, "sp": 190}
     out = _layout(fig, sum(heights[k] for k, _, _ in panels) + 120, start, end, t0, t1, n)
-    return _tag(out, fig, {row["cn0"]: "cn0", row["geo"]: "elev", row["s4"]: "s4"})
+    tags = {row["cn0"]: "cn0", row["geo"]: "elev", row["s4"]: "s4"}
+    if has_tec:  # the app's T key finds the TEC panel by this tag
+        tags[row["tec"]] = "tec"
+    return _tag(out, fig, tags)
 
 
 # --------------------------------------------------------------------------- high rate

@@ -39,8 +39,9 @@ lot ("L1 and L2 fade together; repeats yesterday").
 Pressing a number saves and moves to the next event. **Skip** (`S`) leaves it
 for later. Nothing is lost if you close the browser. Labeled events stay in the
 queue (greyed, with a dot in their class colour), so `←` goes back to one you
-want to change, and `U` jumps to the last one you labeled. `N` writes a note
-(`Enter` returns to the keys).
+want to change, and `U` jumps to the last one you labeled. `⌘Z` (`Ctrl+Z`)
+undoes your last label, skip or clear, and goes back to that event; press it
+again to undo the one before. `N` writes a note (`Enter` returns to the keys).
 
 Switch tabs with `Tab` / `Shift+Tab`, jump back to the previous tab with `` ` ``,
 or go to one directly with `Shift+1`… The Overview, 20 Hz, Other satellites and
@@ -53,7 +54,8 @@ Click a day to limit the queue to it (shown by receiver and time, unless an
 Order is picked in the filters), `Shift`-click a second day for a range,
 and click it again (or "All days") to go back. `[` and `]` move to the
 previous or next day with events left. The filters fold away under
-**Filters**.
+**Filters** (click it or press `F`); while open they scroll inside their own
+box, so the top of the queue panel stays in view.
 
 ## How to decide: the evidence, tab by tab
 
@@ -125,7 +127,8 @@ rules:
 
 1. **Zoom in.** Pinch (or `⌘`-scroll) on the plot to zoom at the cursor, swipe
    sideways to pan, and double-click or press `0` to reset; `Shift`-scroll moves
-   a panel up or down and `⌘Shift`-scroll stretches it. A
+   a panel up or down and `⌘Shift`-scroll stretches it. `T` sets the TEC
+   panel to its mean over the shown time ±5 TECU (`T` again puts it back). A
    20-minute window of 20 Hz data looks like noise at full width. Zoomed to a
    minute, fading versus oscillation is usually clear.
 2. **Change the window.** The "Window ±" box sets the context (1–30 min).

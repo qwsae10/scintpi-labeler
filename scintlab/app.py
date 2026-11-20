@@ -13,6 +13,7 @@ from plotly.utils import PlotlyJSONEncoder
 
 from scintlab import __version__, config, figures
 from scintlab.events import filter_events, load_events
+from scintlab.geomag import dip_latitudes
 from scintlab.labels import LabelStore, load_settings, save_settings
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,12 @@ def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.json.sort_keys = False
     cfg = config.load()
-    state = {"events": load_events(), "store": LabelStore()}
+    def events_for_app() -> pd.DataFrame:
+        ev = load_events()
+        ev["dip_lat"] = dip_latitudes(ev)  # header only; NaN without ppigrf
+        return ev
+
+    state = {"events": events_for_app(), "store": LabelStore()}
     state["by_id"] = state["events"].set_index("event_id", drop=False)
 
     def store() -> LabelStore:
@@ -154,7 +160,7 @@ def create_app() -> Flask:
         # Everything the event header needs, and my decision, so moving to the next event needs
         # no request of its own.
         cols = ["event_id", "receiver", "prn", "date", "start_utc", "end_utc", "n_minutes", "local_hour", "peak_s4",
-                "peak_s4_other", "min_elev", "max_elev", "mean_azim", "rx_type", "day_reason",
+                "peak_s4_other", "min_elev", "max_elev", "mean_azim", "latitude", "dip_lat", "rx_type", "day_reason",
                 "frac_snr1", "frac_snr2", "frac_tec", "max_gap_s", "ends_in_loss_of_lock", "starts_after_gap",
                 "cut_at_day_edge", "crosses_midnight"]
         cols = [c for c in cols if c in ev] + ["_pos"]
@@ -250,7 +256,7 @@ def create_app() -> Flask:
 
     @app.post("/api/reload")
     def reload():
-        state["events"] = load_events()
+        state["events"] = events_for_app()
         state["by_id"] = state["events"].set_index("event_id", drop=False)
         state["store"] = LabelStore()
         return jsonify({"events": len(state["events"])})

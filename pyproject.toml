@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml",
     "flask>=3.0",
     "plotly>=5.20",
+    "ppigrf",  # magnetic dip latitude in the event header (optional at run time)
     "scintkit @ git+https://github.com/qwsae10/scintkit.git",
 ]
 
