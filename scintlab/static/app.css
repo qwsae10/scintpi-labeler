@@ -102,7 +102,7 @@ input, select { font: inherit; padding: 5px 7px; border: 1px solid var(--line); 
 .tab.repeat { color: var(--ink); font-weight: 800; }  /* Sidereal repeat: a repeat was found */
 .tab-tools { display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .tab-tools input { width: 56px; }
-.near-line { flex-basis: 100%; color: var(--ink); }  /* other events of this satellite in the window */
+.near-line { color: var(--ink); }  /* other events of this satellite in the window */
 .near-line b { font-weight: 600; }
 .plot-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px; position: relative; min-height: 300px; }
 .plot-msg { padding: 40px; text-align: center; color: var(--muted); font-size: 15px; }
