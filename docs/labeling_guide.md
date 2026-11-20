@@ -151,7 +151,10 @@ rules:
    press `1`–`4` for its class (`Esc` cancels). Click a marked range to select
    it: a number changes its class, `Delete` removes it, and its edges can be
    dragged. Ranges snap to whole minutes inside the shaded event and are saved
-   with the event label, which then applies to the remaining minutes.
+   with the event label, which then applies to the remaining minutes. Every
+   minute has one class: a range you classify (or stretch) takes its minutes
+   from the ranges it overlaps, cutting or splitting them, and joins a range
+   of the same class that it overlaps or touches.
 7. **Not sure? Say so.** Unsure/Artifact with a note is a useful label. A
    wrong confident label damages the dataset.
 

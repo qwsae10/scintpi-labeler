@@ -500,7 +500,7 @@ function loadEvent() {
   $("#prev").disabled = S.index === 0;
 
   const d = S.decisions.get(q.event_id) || {};
-  if (!S.drafts.has(q.event_id)) S.drafts.set(q.event_id, (d.segments || []).map((s) => ({ ...s })));
+  if (!S.drafts.has(q.event_id)) S.drafts.set(q.event_id, normalizeSegs(d.segments));
   setConfidence(d.confidence || "High");
   $("#for-review").checked = !!d.for_review;
   $("#notes").value = d.notes || "";
@@ -1037,8 +1037,40 @@ function removeSeg(i) {
   renderSegments();
   drawShapes();
 }
+/* One class per minute: the range at index i (just classified, or its edge just dragged) takes its
+   minutes from every other range. A range it covers goes, one it falls inside is split in two, one
+   it overlaps is trimmed; a range of the same class that overlaps or touches it is merged into it.
+   So what the plot shows is what the per-minute export gets (there, too, a later range would win).
+   Returns the range's new index. */
+function carveAround(list, i) {
+  const r = list[i], ra = parseUTC(r.start), rb = parseUTC(r.end);
+  let a = ra, b = rb;
+  const out = [], piece = (s, x, y) => ({ ...s, start: new Date(x).toISOString(), end: new Date(y).toISOString() });
+  list.forEach((s, j) => {
+    if (j === i) return;
+    if (!s.label) { out.push(s); return; }  // the range still waiting for its class is left alone
+    const sa = parseUTC(s.start), sb = parseUTC(s.end);
+    if (sb < ra || sa > rb || (s.label !== r.label && (sb <= ra || sa >= rb))) { out.push(s); return; }  // apart
+    if (s.label === r.label) { a = Math.min(a, sa); b = Math.max(b, sb); return; }  // same class: merge
+    if (sa < ra) out.push(piece(s, sa, ra));
+    if (sb > rb) out.push(piece(s, rb, sb));
+  });
+  const kept = piece(r, a, b);
+  out.push(kept);
+  out.sort((x, y) => parseUTC(x.start) - parseUTC(y.start));
+  list.splice(0, list.length, ...out);
+  return list.indexOf(kept);
+}
+/* ranges saved before carving existed may overlap: apply them in order, as the export does */
+function normalizeSegs(segments) {
+  const list = [];
+  for (const s of segments || []) { list.push({ ...s }); if (s.label) carveAround(list, list.length - 1); }
+  return list;
+}
+
 function classifySeg(i, label) {
   segs()[i].label = label;
+  carveAround(segs(), i);
   S.selSeg = S.pendingSeg = null;
   renderSegments();
   drawShapes();
@@ -1104,7 +1136,18 @@ gd.addEventListener("mousedown", (e) => {
   const up = () => {
     removeEventListener("mousemove", move);
     removeEventListener("mouseup", up);
-    if (edge) { if (moved) renderSegments(); return; }
+    if (edge) {
+      if (!moved) return;
+      const list = segs();
+      if (list[edge.i] && list[edge.i].label) {  // a classified range takes the minutes it was dragged over
+        const pend = S.pendingSeg !== null ? list[S.pendingSeg] : null;
+        S.selSeg = carveAround(list, edge.i);
+        S.pendingSeg = pend ? list.indexOf(pend) : null;
+        drawShapes();
+      }
+      renderSegments();
+      return;
+    }
     if (pan) return;
     const list = segs();
     if (!moved) {  // click: select the range under the cursor, or none (an unclassified one is dropped)
