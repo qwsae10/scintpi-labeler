@@ -107,6 +107,9 @@ curves (day before/after) match the black one, choose Multipath. The tab
 reports when a satellite has no daily repeat (Galileo, GLONASS and most
 BeiDou satellites); then use the other evidence.
 
+The tab's name turns **bold** when a repeat was found on either day, so you
+only need to open it then. Hover over the name to see which day.
+
 ### Sky maps
 
 Each dot is one satellite-minute of the day. Multipath shows up as patches

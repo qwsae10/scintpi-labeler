@@ -152,6 +152,24 @@ function markTab() {
   $("#gesture-hint").classList.toggle("hidden", !TIME_TABS.has(S.tab));
 }
 
+/* The Sidereal repeat tab's name is bold when the satellite crossed the same part of the sky on a
+   neighbouring day, the only time the tab shows a comparison. Known once its figure is built: it is
+   asked for right after the tab you are on (and then comes from the cache when you open it). */
+function checkRepeat() {
+  const q = current(), b = $('.tab[data-tab="sidereal"]');
+  if (!q || !b || b.dataset.for === q.event_id) return;
+  const id = q.event_id;
+  b.dataset.for = id;
+  b.classList.remove("repeat");
+  b.title = "";
+  fetchFig(id, "sidereal", figParams("sidereal")).then((r) => {
+    if (b.dataset.for !== id) return;
+    const found = (r.figure && r.figure.layout.meta && r.figure.layout.meta.repeat) || [];
+    b.classList.toggle("repeat", found.length > 0);
+    b.title = found.length ? `Same sky track on the ${found.join(" and the ")}` : "No repeat of this sky track on the neighbouring days";
+  }, () => {});
+}
+
 function cycleTab(d) {
   const tabs = enabledTabs();
   showTab(tabs[(tabs.indexOf(S.tab) + d + tabs.length) % tabs.length]);
@@ -596,6 +614,7 @@ function prefetchPlan() {
   bgWant.length = 0;
   const q = current();
   if (!q) return;
+  checkRepeat();
   const tabs = enabledTabs(), at = Math.max(0, tabs.indexOf(S.tab));
   const ring = tabs.slice(at).concat(tabs.slice(0, at));  // from this tab on, in Tab order
   const want = (i, t) => bgWant.push([S.queue[i].event_id, t]);

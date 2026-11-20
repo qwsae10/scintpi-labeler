@@ -423,11 +423,12 @@ def sidereal(event: dict, settings: dict) -> dict:
     _line(fig, mins["datetime"], mins.get("s4_1"), "this day", 2, "#101828", mode="lines+markers", gl=False,
           show=False)
     _line(fig, sec["datetime"], sec["elev"], "this day", 3, "#101828", show=False)
-    notes = []
+    notes, found = [], []
     for label, color, dt, note in _repeats(rx, prn, t0, t1):
         notes.append(note)
         if dt is None:
             continue
+        found.append(label)
         o = data.window(rx, "second", t0 + dt, t1 + dt, prn)
         om = data.window(rx, "minute", (t0 + dt).floor("min"), t1 + dt, prn)
         _line(fig, o["datetime"] - dt, o["snr1"], label, 1, color, width=1.1, unit=" dB-Hz")
@@ -443,7 +444,9 @@ def sidereal(event: dict, settings: dict) -> dict:
     fig.update_yaxes(title_text="Elev (°)", range=shared["elev"], row=3, col=1)
     out = _layout(fig, 840, start, end, t0, t1, 3)
     out["layout"]["margin"]["t"] = 110
-    return _tag(out, fig, {1: "cn0", 2: "s4", 3: "elev"})
+    out = _tag(out, fig, {1: "cn0", 2: "s4", 3: "elev"})
+    out["layout"]["meta"]["repeat"] = found  # the app bolds the tab's name when a repeat was found
+    return out
 
 
 # --------------------------------------------------------------------------- skyplot
