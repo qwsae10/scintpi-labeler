@@ -1089,10 +1089,12 @@ const xToT = (x) => { const ax = gd._fullLayout.xaxis, [a, b] = S.view; return a
 const tToX = (t) => { const ax = gd._fullLayout.xaxis, [a, b] = S.view; return ax._offset + (t - a) / (b - a) * ax._length; };
 const snap = (t) => Math.round(t / MIN) * MIN;
 
+/* Only the selected range (click it) and the one waiting for its class have draggable edges, so a
+   new range can be drawn starting right at the edge of another one. */
 function edgeAt(x) {
   const list = segs();
-  const order = list.map((s, i) => i).sort((i, j) => (j === S.selSeg) - (i === S.selSeg));
-  for (const i of order) {
+  for (const i of [S.selSeg, S.pendingSeg]) {
+    if (i === null || !list[i]) continue;
     if (Math.abs(tToX(parseUTC(list[i].start)) - x) <= 5) return { i, side: "start" };
     if (Math.abs(tToX(parseUTC(list[i].end)) - x) <= 5) return { i, side: "end" };
   }
@@ -1112,7 +1114,8 @@ gd.addEventListener("mousedown", (e) => {
   e.preventDefault(); e.stopPropagation();
   const cx = e.clientX, t0 = xToT(x), pan = e.metaKey, v0 = S.view.slice();
   const edge = pan ? null : edgeAt(x);
-  if (edge && edge.i !== S.selSeg) { S.selSeg = edge.i; S.pendingSeg = null; renderSegments(); drawShapes(); }
+  // Grabbing an edge selects nothing: right after drawing a range the pointer sits on its edge, and
+  // a selected range takes the next number key, which then reclassified it instead of labeling the event.
   const q = current(), evS = parseUTC(q.start_utc), evE = parseUTC(q.end_utc);
   let moved = false;
   const move = (ev) => {
@@ -1136,16 +1139,14 @@ gd.addEventListener("mousedown", (e) => {
   const up = () => {
     removeEventListener("mousemove", move);
     removeEventListener("mouseup", up);
-    if (edge) {
-      if (!moved) return;
+    if (edge && moved) {  // resized: a classified range takes the minutes it was dragged over
       const list = segs();
-      if (list[edge.i] && list[edge.i].label) {  // a classified range takes the minutes it was dragged over
-        const pend = S.pendingSeg !== null ? list[S.pendingSeg] : null;
-        S.selSeg = carveAround(list, edge.i);
-        S.pendingSeg = pend ? list.indexOf(pend) : null;
-        drawShapes();
-      }
+      const pend = S.pendingSeg !== null ? list[S.pendingSeg] : null;
+      if (list[edge.i] && list[edge.i].label) carveAround(list, edge.i);
+      S.pendingSeg = pend ? list.indexOf(pend) : null;
+      S.selSeg = null;
       renderSegments();
+      drawShapes();
       return;
     }
     if (pan) return;
@@ -1161,6 +1162,7 @@ gd.addEventListener("mousedown", (e) => {
       S.selSeg = sel;
       renderSegments();
       drawShapes();
+      if (sel !== null) toast(`Range selected: 1–${S.boot.classes.length} changes its class, Delete removes it, Esc deselects`);
       return;
     }
     // whole minutes, inside the event (the event label covers the rest)

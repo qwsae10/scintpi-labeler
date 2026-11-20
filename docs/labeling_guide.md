@@ -150,7 +150,9 @@ rules:
 6. **Part of the event is different?** Drag across the plot over that part and
    press `1`–`4` for its class (`Esc` cancels). Click a marked range to select
    it: a number changes its class, `Delete` removes it, and its edges can be
-   dragged. Ranges snap to whole minutes inside the shaded event and are saved
+   dragged (only a selected range's edges move, so a new range can start right
+   where another ends). Classifying or resizing a range deselects it, so the
+   next number labels the event. Ranges snap to whole minutes inside the shaded event and are saved
    with the event label, which then applies to the remaining minutes. Every
    minute has one class: a range you classify (or stretch) takes its minutes
    from the ranges it overlaps, cutting or splitting them, and joins a range
